@@ -1,0 +1,9 @@
+*~
+*#
+.ghci
+.DS_STORE
+.stack-work/
+templates/static
+.vscode/
+.envrc
+dist-newstyle/

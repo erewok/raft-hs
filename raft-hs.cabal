@@ -1,0 +1,29 @@
+cabal-version:      2.4
+name:               raft
+version:            0.1.0.0
+author:             Erik Aker
+maintainer:         eraker@gmail.com
+license:            BSD-3-Clause
+copyright:          2021 Erik Aker
+synopsis:           A raft implementation in Haskell2010
+
+extra-source-files: CHANGELOG.md
+
+executable raft
+    main-is:          Main.hs
+    build-depends:    base, raft
+    hs-source-dirs:   app
+    GHC-Options:      -Wall -rtsopts
+    Default-Language: Haskell2010
+
+Library
+    hs-source-dirs:   src
+    GHC-Options:      -Wall -rtsopts
+    Default-Language: Haskell2010
+    Exposed-Modules:  Raft
+    Build-Depends:
+                    base                  ,
+                    containers            ,
+                    hashable              ,
+                    stm                   ,
+                    unordered-containers
