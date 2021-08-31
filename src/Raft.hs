@@ -27,8 +27,10 @@ module Raft where
 import Data.Hashable (Hashable)
 import qualified Data.HashSet as HS
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Vector as V
+import Data.Vector ((!?))
 import GHC.Generics (Generic)
-
+import GHC.Records (HasField(..))
 
 -- | Every raft server has an Id, which is represented as an `int` here
 newtype ServerId = ServerId { unServerId :: Int } deriving (Show, Eq, Generic)
@@ -44,13 +46,13 @@ newtype LogIndex = LogIndex { unLogIndex :: Int } deriving (Show, Eq, Generic)
 -- This will be the subject of our consensus.
 newtype Log a = Log
     {
-    -- | All log entries are in here
-    entries :: [LogEntry a]
+    -- | All log entries are in stored in here
+    entries :: V.Vector (LogEntry a)
     }  deriving (Show, Eq, Generic)
 
 -- | A LogEntry has a term and the contents of the entry.
 data LogEntry a = LogEntry
-    { term :: LogTerm
+    { term :: !LogTerm
     , content :: a
     } deriving (Show, Eq, Generic)
 
@@ -67,12 +69,6 @@ data Event a =
     | MsgRecv (Msg a)
     | Restart
 
--- | A raft server may only be one of three different types.
-data Server a where
-    Follower    :: ServerId -> FollowerState  -> Log a -> Server a
-    Candidate   :: ServerId -> CandidateState -> Log a -> Server a
-    Leader      :: ServerId -> LeaderState    -> Log a -> Server a
-
 -- | A moment in time is a simulated clock.
 --  A Heartbeat occurs after so many ticks.
 --  An ElectionTimeout occurs after so many ticks _without_ a Heartbeat Received.
@@ -83,19 +79,27 @@ data Moment =
     | Heartbeat
     | ElectionTimeout
 
+
+-- | A raft server may only be one of three different types.
+data Server a where
+    Follower    :: ServerId -> FollowerState  -> Log a -> Server a
+    Candidate   :: ServerId -> CandidateState -> Log a -> Server a
+    Leader      :: ServerId -> LeaderState    -> Log a -> Server a
+
+
 -- | FollowerState is the state recorded for each follower
 data FollowerState = FollowerState
-    { currentTerm   :: !LogTerm
-    , fCommitIndex  :: !LogIndex
-    , fLastApplied  :: !LogIndex
-    , votedFor      :: !(Maybe ServerId)
+    { term         :: !LogTerm
+    , commitIndex  :: !LogIndex
+    , lastApplied  :: !LogIndex
+    , votedFor     :: !(Maybe ServerId)
     } deriving (Show, Eq)
 
 -- | CandidateState is the state recorded for each candidate
 data CandidateState = CandidateState
-    { candidateTerm  :: !LogTerm
-    , cCommitIndex   :: !LogIndex
-    , cLastApplied   :: !LogIndex
+    { term           :: !LogTerm
+    , commitIndex    :: !LogIndex
+    , lastApplied    :: !LogIndex
     , votesGranted   :: HS.HashSet ServerId
     , votesResponded :: HS.HashSet ServerId
     } deriving (Show, Eq)
@@ -103,11 +107,11 @@ data CandidateState = CandidateState
 -- | LeaderState is the state recorded for a leader.
 --  There should only be one leader at a time in a cluster.
 data LeaderState = LeaderState
-    { leaderTerm    :: !LogTerm
-    , lCommitIndex  :: !LogIndex
-    , lLastApplied  :: !LogIndex
-    , matchIndex    :: HM.HashMap ServerId LogIndex
-    , nextIndex     :: HM.HashMap ServerId LogIndex
+    { term         :: !LogTerm
+    , commitIndex  :: !LogIndex
+    , lastApplied  :: !LogIndex
+    , matchIndex   :: HM.HashMap ServerId LogIndex
+    , nextIndex    :: HM.HashMap ServerId LogIndex
     } deriving (Show, Eq)
 
 -- | Raft defines the following RPC types:
@@ -117,7 +121,7 @@ data AppendEntriesRPC a = AppendEntriesRPC
     { sourceAndDest :: !SourceDest
     , prevLogIndex  :: !LogIndex
     , prevLogTerm   :: !LogTerm
-    , logEntries    :: [LogEntry a]
+    , logEntries    :: V.Vector (LogEntry a)
     , commitIndex   :: !LogIndex
     }  deriving (Show, Eq)
 
@@ -135,7 +139,7 @@ data RequestVoteRPC = RequestVoteRPC
     , term          :: !LogTerm
     }
 
-data RequestVoteResponseRPC = ResponseVoteRPC
+data RequestVoteResponseRPC = RequestVoteResponseRPC
     { sourceAndDest :: !SourceDest
     , voteGranted   :: !Bool
     , term          :: !LogTerm
@@ -163,38 +167,38 @@ data SourceDest = SourceDest
 --  A Leader may become a Follower.
 --  First, we define the state transition *to* a candidate.
 convertToCandidate :: Server a -> Server a
-convertToCandidate (Follower serverId followerState log') =
+convertToCandidate server@(Follower serverId followerState log') =
     let
         votesResponded' = HS.fromList [ serverId ]
         votesGranted' = HS.fromList [ serverId ]
-        newTerm  = LogTerm $ ((+1) . unLogTerm . currentTerm ) followerState
+        newTerm  = incrementLogTerm server
         newState = CandidateState {
-            candidateTerm = newTerm,
-            cCommitIndex = fCommitIndex followerState,
-            cLastApplied = fLastApplied followerState,
-            votesResponded = votesResponded',
-            votesGranted = votesGranted'
+            term             = newTerm
+            , commitIndex    = getField @"commitIndex" followerState
+            , lastApplied    = getField @"lastApplied" followerState
+            , votesResponded = votesResponded'
+            , votesGranted   = votesGranted'
         }
     in
         Candidate serverId newState log'
-convertToCandidate (Candidate serverId candidateState log') =
+convertToCandidate server@(Candidate serverId candidateState log') =
     let
-        newState = candidateState { candidateTerm = LogTerm $ ((+1) . unLogTerm . candidateTerm ) candidateState }
+        newState = candidateState { term = incrementLogTerm server } :: CandidateState
     in
         Candidate serverId newState log'
-convertToCandidate leader@Leader {} = leader  -- Leaders cannot be converted into candidates
+convertToCandidate server = server  -- Leaders cannot be converted into candidates
 
 -- |  Here, we convert a server to a leader. Only a Candidate may be converted
 convertToLeader :: [ServerId] -> Server a -> Server a
 convertToLeader allServers (Candidate serverId candidateState log') =
     let
-        logLength = length . entries $ log'
+        logLength = V.length . entries $ log'
         newState = LeaderState {
-            leaderTerm = candidateTerm candidateState
-            , lCommitIndex = cCommitIndex candidateState
-            , lLastApplied = cLastApplied candidateState
-            , nextIndex = HM.fromList $ map (\s -> (s, LogIndex $ logLength + 1)) allServers
-            , matchIndex = HM.fromList $ map (\s -> (s, LogIndex 0)) allServers
+            term          = getField @"term" candidateState
+            , commitIndex = getField @"commitIndex" candidateState
+            , lastApplied = getField @"lastApplied" candidateState
+            , nextIndex   = HM.fromList $ map (\s -> (s, LogIndex $ logLength + 1)) allServers
+            , matchIndex  = HM.fromList $ map (\s -> (s, LogIndex 0)) allServers
         }
     in
         Leader serverId newState log'
@@ -207,25 +211,34 @@ convertToFollower :: Server a -> Server a
 convertToFollower (Candidate serverId candidateState log') =
     let
         newState = FollowerState {
-            currentTerm = candidateTerm candidateState
-            , votedFor = Nothing
-            , fCommitIndex = cCommitIndex candidateState
-            , fLastApplied = cLastApplied candidateState
+            term          = getField @"term" candidateState
+            , commitIndex = getField @"commitIndex" candidateState
+            , lastApplied = getField @"lastApplied" candidateState
+            , votedFor    = Nothing
         }
     in
         Follower serverId newState log'
 convertToFollower (Leader serverId leaderState log') =
     let
         newState = FollowerState {
-            currentTerm = leaderTerm leaderState
-            , votedFor = Nothing
-            , fCommitIndex = lCommitIndex leaderState
-            , fLastApplied = lLastApplied leaderState
+            term          = getField @"term" leaderState
+            , votedFor    = Nothing
+            , commitIndex = getField @"commitIndex" leaderState
+            , lastApplied = getField @"lastApplied" leaderState
         }
     in
         Follower serverId newState log'
 convertToFollower follower = follower
 
+
+-- | Functions to generate RPCs:
+-- Candidates generate RequestVoteRPCs.
+-- Leaders generate AppendEntriesRPCs.
+generateAppendEntriesRPC :: [ServerId] -> ServerId -> LeaderState -> Log a -> AppendEntriesRPC a
+generateAppendEntriesRPC serverList leaderId state log' = undefined
+
+generateRequestVoteRPC :: [ServerId] -> ServerId -> CandidateState -> Log a -> RequestVoteRPC
+generateRequestVoteRPC serverList candidateId state log' = undefined
 
 -- | Receipt of RPCs means some state change and possibly a server change.
 --  Here, we handle the append entries RPC
@@ -236,22 +249,47 @@ handleAppendEntries = undefined
 handleRequestVote :: RequestVoteRPC -> Server a -> (RequestVoteResponseRPC, Server a)
 handleRequestVote request server = undefined
 
--- | Servers will be translating a request into a response
-mkAppendEntriesResponse :: AppendEntriesRPC a -> Server a -> AppendEntriesResponseRPC
-mkAppendEntriesResponse request server =
+-- | Here servers will translate a request into a response
+mkAppendEntriesResponse :: Bool -> AppendEntriesRPC a -> FollowerState -> AppendEntriesResponseRPC
+mkAppendEntriesResponse successful request state =
     let
-        senderRecvr = sourceAndDest @AppendEntriesRPC request
-        sourceDest' = swapSourceAndDest senderRecvr
+        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
         resp = AppendEntriesResponseRPC {
-            sourceAndDest = sourceDest
-            , matchIndex = commitIndex request
-            , success = True
-            , term = 0
+            sourceAndDest = senderRecvr
+            , matchIndex = getField @"commitIndex" request
+            , success = successful
+            , term = getField @"term" state
         }
     in resp
 
-mkRequestVoteResponse :: RequestVoteRPC -> Server a -> RequestVoteResponseRPC
-mkRequestVoteResponse request server = undefined
+mkRequestVoteResponse :: Bool -> RequestVoteRPC -> Server a -> RequestVoteResponseRPC
+mkRequestVoteResponse granted request (Follower _ state _) =
+    let
+        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
+        resp = RequestVoteResponseRPC {
+            sourceAndDest = senderRecvr
+            , voteGranted = granted
+            , term = getField @"term" state
+        }
+    in resp
+mkRequestVoteResponse granted request (Candidate _ state _) =
+    let
+        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
+        resp = RequestVoteResponseRPC {
+            sourceAndDest = senderRecvr
+            , voteGranted = granted
+            , term = getField @"term" state
+        }
+    in resp
+mkRequestVoteResponse granted request (Leader _ state _) =
+    let
+        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
+        resp = RequestVoteResponseRPC {
+            sourceAndDest = senderRecvr
+            , voteGranted = granted
+            , term = getField @"term" state
+        }
+    in resp
 
 -- | When replying to an RPC, we swap the source and dest
 --  So that the receiver knows where it needs to get returned to.
@@ -260,3 +298,34 @@ swapSourceAndDest input = input {
     source = dest input
     , dest = source input
     }
+
+
+-- | Utilities for slicing into the log to discover
+--  terms, indices, etc. This is useful for all server types.
+-- Note: we follow the Raft paper here and use 1-based indexing!
+
+-- | Retrieves the term of the last item in the log or 0 if log is empty.
+logLastTerm :: Log a -> LogTerm
+logLastTerm log' =
+    if logLength log' > 0
+    then (getField @"term") . V.last . entries $ log'
+    else LogTerm 0
+
+-- | Retrieves the term of an item at a specific index in the log or 0 if log doesn't include that index. Assumes `LogIndex` is using 1-based indexing!
+logTermAtIndex :: Log a -> LogIndex -> LogTerm
+logTermAtIndex log' (LogIndex index) =
+    case entries log' !? (index - 1) of
+        Nothing -> LogTerm 0
+        Just entry -> getField @"term" entry
+
+-- | Simple function to get the length of a log
+logLength :: Log a -> Int
+logLength = V.length . entries
+
+
+-- | Utilities for working with servers
+incrementLogTerm :: Server a -> LogTerm
+incrementLogTerm (Follower _ state _) = LogTerm $ ((+1) . unLogTerm . (getField @"term")) state
+incrementLogTerm (Candidate _ state _) = LogTerm $ ((+1) . unLogTerm . (getField @"term")) state
+-- Leader's log term must not be incremented
+incrementLogTerm (Leader _ state _) = getField @"term" state

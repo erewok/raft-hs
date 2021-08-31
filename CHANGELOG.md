@@ -1,5 +1,5 @@
 # Revision history for raft-hs
 
-## 0.1.0.0 -- YYYY-mm-dd
+## 0.1.0.0 -- 2021-08-31
 
-* First version. Released on an unsuspecting world.
+* First version. Work-in-progress. An experiment. For fun.
