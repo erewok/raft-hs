@@ -20,7 +20,10 @@ Library
     hs-source-dirs:   src
     GHC-Options:      -Wall -rtsopts
     Default-Language: Haskell2010
-    Exposed-Modules:  Raft
+    Exposed-Modules:  Raft                ,
+                      Raft.Log            ,
+                      Raft.Message        ,
+                      Raft.Server
     Build-Depends:
                     base                  ,
                     containers            ,
