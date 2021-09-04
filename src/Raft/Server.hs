@@ -69,7 +69,7 @@ convertToCandidate server@(Follower serverId followerState log') =
     let
         votesResponded' = HS.fromList [ serverId ]
         votesGranted' = HS.fromList [ serverId ]
-        newTerm  = incrementLogTerm server
+        newTerm  = incrementServerLogTerm server
         newState = CandidateState {
             currentTerm      = newTerm
             , commitIndex    = getField @"commitIndex" followerState
@@ -81,7 +81,7 @@ convertToCandidate server@(Follower serverId followerState log') =
         Candidate serverId newState log'
 convertToCandidate server@(Candidate serverId candidateState log') =
     let
-        newState = candidateState { currentTerm = incrementLogTerm server } :: CandidateState
+        newState = candidateState { currentTerm = incrementServerLogTerm server } :: CandidateState
     in
         Candidate serverId newState log'
 convertToCandidate server = server  -- Leaders cannot be converted into candidates
@@ -90,13 +90,12 @@ convertToCandidate server = server  -- Leaders cannot be converted into candidat
 convertToLeader :: [ServerId] -> Server a -> Server a
 convertToLeader allServers (Candidate serverId candidateState log') =
     let
-        logLength = V.length . entries $ log'
         newState = LeaderState {
             currentTerm   = getField @"currentTerm" candidateState
             , commitIndex = getField @"commitIndex" candidateState
             , lastApplied = getField @"lastApplied" candidateState
-            , nextIndex   = HM.fromList $ map (\s -> (s, LogIndex $ logLength + 1)) allServers
-            , matchIndex  = HM.fromList $ map (\s -> (s, LogIndex 0)) allServers
+            , nextIndex   = HM.fromList $ map (\s -> (s, nextLogIndex log')) allServers
+            , matchIndex  = HM.fromList $ map (\s -> (s, startLogIndex)) allServers
         }
     in
         Leader serverId newState log'
@@ -129,11 +128,11 @@ convertToFollower (Leader serverId leaderState log') =
 convertToFollower follower = follower
 
 -- | Utilities for working with servers
-incrementLogTerm :: Server a -> LogTerm
-incrementLogTerm (Follower _ state _) = LogTerm $ ((+1) . unLogTerm . (getField @"currentTerm")) state
-incrementLogTerm (Candidate _ state _) = LogTerm $ ((+1) . unLogTerm . (getField @"currentTerm")) state
+incrementServerLogTerm :: Server a -> LogTerm
+incrementServerLogTerm (Follower _ state _) = incrementLogTerm . (getField @"currentTerm") $ state
+incrementServerLogTerm (Candidate _ state _) = incrementLogTerm . (getField @"currentTerm") $ state
 -- Leader's log term must not be incremented
-incrementLogTerm (Leader _ state _) = getField @"currentTerm" state
+incrementServerLogTerm (Leader _ state _) = getField @"currentTerm" state
 
 -- | Reset vote for Follower only
 resetFollowerVotedFor :: FollowerState -> FollowerState

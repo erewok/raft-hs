@@ -139,10 +139,10 @@ mkRequestVoteResponse granted request (Leader _ state _) =
 -- | Check append entries request has expected log
 appendReqCheckLogOk :: AppendEntriesRPC a -> Log a -> Bool
 appendReqCheckLogOk req log'
-    | prevIndex == LogIndex 0 = True
+    | prevIndex == startLogIndex = True
     | otherwise =
-         prevIndex > LogIndex 0
-            && prevIndex <= LogIndex (logLength log' + 1)
+         prevIndex > startLogIndex
+            && prevIndex <= nextLogIndex log'
                 && prevLogTerm req == logTermAtIndex log' prevIndex
     where prevIndex = prevLogIndex req
 
