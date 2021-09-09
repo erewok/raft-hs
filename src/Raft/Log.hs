@@ -12,10 +12,12 @@ module Raft.Log (
     , mkLogIndex
     , checkAppendEntries
     , appendEntries
+    , clearStaleEntriesAndAppend
     , logLastTerm
     , logTermAtIndex
     , logLength
     , logIndexForLength
+    , logIndexToVectorIndex
     , nextLogIndex
     , startLogTerm
     , startLogIndex
@@ -94,22 +96,21 @@ appendEntries log' newEntries prevIndex prevTerm =
 clearStaleEntriesAndAppend :: LogIndex -> Log a -> V.Vector (LogEntry a) -> V.Vector (LogEntry a)
 clearStaleEntriesAndAppend entryIndex log' newEntries =
     let
-        insertion = (unLogIndex entryIndex) - 1
-        prevEntries = entries log'
-        (entriesUpToUndex, prevTail) = V.splitAt insertion prevEntries
+        insertion = logIndexToVectorIndex entryIndex
+        (entriesUpToIndex, prevTail) = V.splitAt insertion (entries log')
 
         prevTailWithIndex = V.indexed prevTail
         compareToNew (idx, oldItem) = (Just $ term oldItem) == (term <$> newEntries !? idx)
         (oldTailWithIndex, dropConflictWithIndex) = V.partition compareToNew prevTailWithIndex
         newEntriesSliced =
-            if V.null dropConflictWithIndex
+            if V.null oldTailWithIndex
             then
-                V.empty
+                newEntries
             else
-                let (offset, _) = V.head dropConflictWithIndex
+                let (offset, _) = V.last oldTailWithIndex
                 in V.drop offset newEntries
         oldTailPreserved = V.map snd oldTailWithIndex
-    in V.concat[entriesUpToUndex, oldTailPreserved, newEntriesSliced]
+    in V.concat[entriesUpToIndex, oldTailPreserved, newEntriesSliced]
 
 -- | Utilities for slicing into the log to discover
 --  terms, indices, etc.
@@ -148,6 +149,10 @@ incrementLogTerm (LTerm n) = LTerm (n + 1)
 -- | Adding one to the LogTerm
 incrementLogIndex :: LogIndex -> LogIndex
 incrementLogIndex (LIndex n) = LIndex (n + 1)
+
+-- | Joke's on me with this one, isn't it?
+logIndexToVectorIndex :: LogIndex -> Int
+logIndexToVectorIndex (LIndex n) = n - 1
 
 -- | Raft uses 1-based indexing, so we will _start_
 -- all terms and indices at 0
