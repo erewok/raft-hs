@@ -41,7 +41,8 @@ newtype LogTerm = LTerm { unLogTerm :: Int }  deriving (Show, Eq, Generic, Ord, 
 newtype LogIndex = LIndex { unLogIndex :: Int } deriving (Show, Eq, Generic, Ord, Num)
 
 -- | In order to make sure that these are non-negative, we
--- have constructor functions for them
+-- have constructor functions for them. This is meant to
+-- keep us honest. The data constructors are not exported.
 mkLogTerm :: Int -> Maybe LogTerm
 mkLogTerm n
     | n < 0 = Nothing
@@ -69,11 +70,14 @@ data LogEntry a = LogEntry
 
 -- | Functions to operate on logs.
 -- We are sticking to the 1-based indexing used in the Raft paper.
+-- Note: we generally don't provide access to the underlying constructors
+-- so that we can preserve our rule that indexes/terms are >= 0.
 
 -- | Append Entries is one of the most important parts of raft. We start with a function to ascertain
 -- whether append entries is allowed for this log.
 checkAppendEntries :: Log a -> LogIndex -> LogTerm -> Bool
 checkAppendEntries log' prevIndex prevTerm
+    | prevIndex == startLogIndex = True
     | prevIndex >= LIndex (logLength log' + 1) = False
     | prevIndex >= 1 && (logTermAtIndex log' prevIndex /= prevTerm) = False
     | otherwise = True

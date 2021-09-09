@@ -44,6 +44,9 @@ test-suite raft-test
                     hspec               ,
                     hspec-discover      ,
                     QuickCheck          ,
-                    quickcheck-instances
-  Exposed-Modules: Raft.LogSpec
+                    quickcheck-instances,
+                    text                ,
+                    vector
+  Other-Modules:   Raft.LogSpec         ,
+                   SpecFixtures
   default-language: Haskell2010
