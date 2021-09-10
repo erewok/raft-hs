@@ -100,7 +100,7 @@ appendEntries log' newEntries prevIndex prevTerm =
 clearStaleEntriesAndAppend :: LogIndex -> Log a -> V.Vector (LogEntry a) -> V.Vector (LogEntry a)
 clearStaleEntriesAndAppend entryIndex log' newEntries =
     let
-        insertion = logIndexToVectorIndex entryIndex
+        insertion = logIndexToVectorIndex (entryIndex + 1)
         (entriesUpToIndex, prevTail) = V.splitAt insertion (entries log')
 
         prevTailWithIndex = V.indexed prevTail

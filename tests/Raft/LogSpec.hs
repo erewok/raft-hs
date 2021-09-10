@@ -16,8 +16,9 @@ checkAppendEntriesConsistencyLengthProp :: (Eq a) => V.Vector (LogEntry a) -> V.
 checkAppendEntriesConsistencyLengthProp entries1 entries2 = V.length entries1 >= V.length entries2
 
 checkAppendEntriesTailConsistencyProp :: (Eq a) => LogIndex -> V.Vector (LogEntry a) -> V.Vector (LogEntry a) -> Bool
-checkAppendEntriesTailConsistencyProp lgIdx entries1 entries2 =
-  V.drop (logIndexToVectorIndex lgIdx) entries1 == entries2
+checkAppendEntriesTailConsistencyProp lgIdx entries1 entries2
+  | lgIdx == startLogIndex = entries1 == entries2
+  | otherwise = V.drop (logIndexToVectorIndex lgIdx) entries1 == entries2
 
 
 logSpec :: Spec
@@ -30,7 +31,7 @@ logSpec = do
       let maybeN n = incrementLogIndex <$> mkLogIndex n
       in \n -> if n >= 0 then maybeN n == mkLogIndex (n + 1) else maybeN n == Nothing
   describe "incrementLogTerm" $ do
-    prop "incrementLogIndex is LogIndex +1" $
+    prop "incrementLogTerm is LogTerm +1" $
       let maybeN n = incrementLogTerm <$> mkLogTerm n
       in \n -> if n >= 0 then maybeN n == mkLogTerm (n + 1) else maybeN n == Nothing
   -- Section §5.3: Log Matching Property:
@@ -40,12 +41,12 @@ logSpec = do
   --   then the logs are identical in all preceding entries
   -- We will assert these rules are maintained after invoking our functions
   describe "Section §5.3: Log Matching Property with clearStaleEntriesAndAppend" $ do
-    prop "Consistent after clearStaleEntriesAndAppend: Log length >= new entries length" $
+    prop "Log length >= new entries length" $
       \log1 entries -> do
         idx <- arbitraryLogIndex entries
         let clearedEntries = clearStaleEntriesAndAppend idx log1 (entries :: V.Vector (LogEntry Bool))
         pure $ checkAppendEntriesConsistencyLengthProp clearedEntries entries
-    prop "Consistency after clearStaleEntriesAndAppend: newEntries == Tail of Existing" $
+    prop "newEntries == Tail of Existing" $
       \log1 entries -> do
         idx <- arbitraryLogIndex entries
         let clearedEntries = clearStaleEntriesAndAppend idx log1 (entries :: V.Vector (LogEntry Bool))
