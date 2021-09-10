@@ -40,10 +40,21 @@ instance Arbitrary LogTerm where
 
 -- | We will mostly want to sample from the length of an existing log here
 arbitraryLogIndex :: V.Vector (LogEntry a) -> Gen LogIndex
-arbitraryLogIndex input = arbitraryLogIndex' (0, V.length input)
+arbitraryLogIndex input
+    | V.null input = arbitraryLogIndex' (0, 0)
+    | otherwise    = arbitraryLogIndex' (0, V.length input - 1)
 
 arbitraryLogIndex' :: (Int, Int) -> Gen LogIndex
 arbitraryLogIndex' range = fromJust . mkLogIndex <$> chooseInt range
+
+-- | The arbitraryLogIndex is functionally dependent on the size of the input log
+-- So we will actually generate instances of this thing instead
+data ArbLogWithIndex a = ArbLogWithIndex { lgIndex :: LogIndex, lg :: Log a} deriving (Eq, Show)
+instance (Eq a, Arbitrary a) => Arbitrary (ArbLogWithIndex a) where
+    arbitrary = do
+        lg <- arbitrary
+        lgIndex <- arbitraryLogIndex (entries lg)
+        pure $ ArbLogWithIndex {..}
 
 -- | We need this instance to produce a vector where terms are increasing
 instance (Eq a) => Ord (LogEntry a) where

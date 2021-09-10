@@ -92,7 +92,7 @@ appendEntries log' newEntries prevIndex prevTerm =
         then (log', False)
         else
             let
-                updatedEntries = clearStaleEntriesAndAppend prevIndex log' newEntries
+                updatedEntries = clearStaleEntriesAndAppend (prevIndex + 1) log' newEntries
             in (Log updatedEntries, True)
 
 -- | This function checks for the non-matching term from the LogIndex forward
@@ -100,12 +100,11 @@ appendEntries log' newEntries prevIndex prevTerm =
 clearStaleEntriesAndAppend :: LogIndex -> Log a -> V.Vector (LogEntry a) -> V.Vector (LogEntry a)
 clearStaleEntriesAndAppend entryIndex log' newEntries =
     let
-        insertion = logIndexToVectorIndex (entryIndex + 1)
-        (entriesUpToIndex, prevTail) = V.splitAt insertion (entries log')
-
-        prevTailWithIndex = V.indexed prevTail
+        insertion = logIndexToVectorIndex entryIndex
+        (entriesUpThroughIndex, prevTail) = V.splitAt insertion (entries log')
         compareToNew (idx, oldItem) = (Just $ term oldItem) == (term <$> newEntries !? idx)
-        (oldTailWithIndex, dropConflictWithIndex) = V.partition compareToNew prevTailWithIndex
+        (oldTailWithIndex, dropConflictWithIndex) = V.partition compareToNew (V.indexed prevTail)
+        oldTailPreserved = V.map snd oldTailWithIndex
         newEntriesSliced =
             if V.null oldTailWithIndex
             then
@@ -113,8 +112,7 @@ clearStaleEntriesAndAppend entryIndex log' newEntries =
             else
                 let (offset, _) = V.last oldTailWithIndex
                 in V.drop offset newEntries
-        oldTailPreserved = V.map snd oldTailWithIndex
-    in V.concat[entriesUpToIndex, oldTailPreserved, newEntriesSliced]
+    in V.concat[entriesUpThroughIndex, oldTailPreserved, newEntriesSliced]
 
 -- | Utilities for slicing into the log to discover
 --  terms, indices, etc.

@@ -8,17 +8,31 @@ import Data.Text (Text)
 import qualified Data.Vector as V
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck (Property, ioProperty, property, (===))
 
 import Raft.Log
 import SpecFixtures
 
-checkAppendEntriesConsistencyLengthProp :: (Eq a) => V.Vector (LogEntry a) -> V.Vector (LogEntry a) -> Bool
-checkAppendEntriesConsistencyLengthProp entries1 entries2 = V.length entries1 >= V.length entries2
+prop_clearStaleEntriesEmptyLog :: V.Vector (LogEntry Bool) -> Property
+prop_clearStaleEntriesEmptyLog entries' = do
+    let clearedEntries = clearStaleEntriesAndAppend startLogIndex (Log {entries = V.empty}) entries'
+    property $ clearedEntries === entries'
 
-checkAppendEntriesTailConsistencyProp :: (Eq a) => LogIndex -> V.Vector (LogEntry a) -> V.Vector (LogEntry a) -> Bool
-checkAppendEntriesTailConsistencyProp lgIdx entries1 entries2
-  | lgIdx == startLogIndex = entries1 == entries2
-  | otherwise = V.drop (logIndexToVectorIndex lgIdx) entries1 == entries2
+prop_clearStaleEntriesLengthConsistent :: ArbLogWithIndex Bool -> V.Vector (LogEntry Bool) -> Property
+prop_clearStaleEntriesLengthConsistent arbLgIdx entries' = do
+    let idx = lgIndex arbLgIdx
+        log' = lg arbLgIdx
+        clearedEntries = clearStaleEntriesAndAppend idx log' entries'
+    property $ (V.length clearedEntries) >= V.length entries'
+
+prop_clearStaleEntriesTailConsistent :: ArbLogWithIndex Bool -> V.Vector (LogEntry Bool) -> Property
+prop_clearStaleEntriesTailConsistent arbLgIdx entries' = do
+  let idx = lgIndex arbLgIdx
+      log' = lg arbLgIdx
+      clearedEntries = clearStaleEntriesAndAppend idx log' entries'
+  case idx of
+    startLogIndex -> clearedEntries === entries'
+    _ -> (V.drop (logIndexToVectorIndex idx) clearedEntries) === entries'
 
 
 logSpec :: Spec
@@ -40,14 +54,13 @@ logSpec = do
   -- If two entries in different logs have the same index and term,
   --   then the logs are identical in all preceding entries
   -- We will assert these rules are maintained after invoking our functions
-  describe "Section §5.3: Log Matching Property with clearStaleEntriesAndAppend" $ do
-    prop "Log length >= new entries length" $
-      \log1 entries -> do
-        idx <- arbitraryLogIndex entries
-        let clearedEntries = clearStaleEntriesAndAppend idx log1 (entries :: V.Vector (LogEntry Bool))
-        pure $ checkAppendEntriesConsistencyLengthProp clearedEntries entries
-    prop "newEntries == Tail of Existing" $
-      \log1 entries -> do
-        idx <- arbitraryLogIndex entries
-        let clearedEntries = clearStaleEntriesAndAppend idx log1 (entries :: V.Vector (LogEntry Bool))
-        pure $ checkAppendEntriesTailConsistencyProp idx clearedEntries entries
+  describe "Section §5.3: Log Matching Property with clearStaleEntriesAndAppend: " $ do
+
+    -- I dont think this test makes any sense. TODO: Rethink this.
+    -- it "Should handle empty entries" $ property prop_clearStaleEntriesEmptyEntries
+
+    it "Should handle an empty log to start" $ property prop_clearStaleEntriesEmptyLog
+
+    it "Log length >= new entries length" $ property prop_clearStaleEntriesLengthConsistent
+
+    it "newEntries == Tail of Existing" $ property prop_clearStaleEntriesTailConsistent
