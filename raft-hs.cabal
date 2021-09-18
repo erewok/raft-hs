@@ -29,6 +29,7 @@ Library
                     containers            ,
                     hashable              ,
                     stm                   ,
+                    text                  ,
                     unordered-containers  ,
                     vector
 

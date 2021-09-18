@@ -16,33 +16,37 @@ import Raft.Log
 -- | Log Generators
 -- We will apply the following rule for these:
 -- All *LogTerm*s in the list of entries are increasing
--- That is, entry n - 1 will have a term <= the term for entry n
+-- That is, entry n - 1 will have a term <= term for entry n
 
 -- | Arbitrary instance of a Log that fulfills our required property of incrementing terms
 instance (Eq a, Arbitrary a) => Arbitrary (Log a) where
     arbitrary = do
         entries <- arbitrary :: Gen (V.Vector (LogEntry a))
+        let offset = if V.null entries then startLogIndex else (index . V.head $ entries) - 1
         pure $ Log {..}
 
 instance (Eq a, Arbitrary a) => Arbitrary (V.Vector (LogEntry a)) where
     arbitrary = do
-        entries <- sort <$> arbitrary :: Gen [LogEntry a]
-        pure $ V.fromList entries
+        start <- chooseInt (1, 5)
+        entries' <- sort <$> arbitrary :: Gen [LogEntry a]
+        pure $ V.imap (\idx val -> val { index = fromJust . mkLogIndex $ idx + start}) (V.fromList entries')
 
 instance (Arbitrary a) => Arbitrary (LogEntry a) where
     arbitrary = do
         term <- arbitrary
         content <- arbitrary
+        let index = incrementLogIndex startLogIndex
         pure $ LogEntry {..}
 
 instance Arbitrary LogTerm where
-    arbitrary = (fromJust . mkLogTerm) <$> chooseInt (0, 100)
+    arbitrary = (fromJust . mkLogTerm) <$> chooseInt (1, 100)
+
+instance Arbitrary LogIndex where
+    arbitrary = (fromJust . mkLogIndex) <$> chooseInt (1, 20)
 
 -- | We will mostly want to sample from the length of an existing log here
 arbitraryLogIndex :: V.Vector (LogEntry a) -> Gen LogIndex
-arbitraryLogIndex input
-    | V.null input = arbitraryLogIndex' (0, 0)
-    | otherwise    = arbitraryLogIndex' (0, V.length input - 1)
+arbitraryLogIndex input = arbitraryLogIndex' (1, V.length input)
 
 arbitraryLogIndex' :: (Int, Int) -> Gen LogIndex
 arbitraryLogIndex' range = fromJust . mkLogIndex <$> chooseInt range
@@ -67,17 +71,25 @@ terms = map termMakerUnsafe [1..10]
 termMakerUnsafe :: Int -> LogTerm
 termMakerUnsafe n = fromJust . mkLogTerm $ n
 
+indexes :: [LogIndex]
+indexes = map indexMakerUnsafe [1..]
+
+indexMakerUnsafe :: Int -> LogIndex
+indexMakerUnsafe n = fromJust . mkLogIndex $ n
+
+
 -- | Log from Figure 6 in the paper
 figure6Log :: Log Text
-figure6Log = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "x <- 3" }
-  , LogEntry {term = terms !! 0, content = "y <- 1" }
-  , LogEntry {term = terms !! 0, content = "y <- 9" }
-  , LogEntry {term = terms !! 1, content = "x <- 2" }
-  , LogEntry {term = terms !! 2, content = "x <- 0" }
-  , LogEntry {term = terms !! 2, content = "y <- 7" }
-  , LogEntry {term = terms !! 2, content = "x <- 5" }
-  , LogEntry {term = terms !! 2, content = "x <- 4" }
+figure6Log = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "x <- 3", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "y <- 1", index = indexes !! 1  }
+        , LogEntry {term = terms !! 0, content = "y <- 9", index = indexes !! 2  }
+        , LogEntry {term = terms !! 1, content = "x <- 2", index = indexes !! 3  }
+        , LogEntry {term = terms !! 2, content = "x <- 0", index = indexes !! 4  }
+        , LogEntry {term = terms !! 2, content = "y <- 7", index = indexes !! 5  }
+        , LogEntry {term = terms !! 2, content = "x <- 5", index = indexes !! 6  }
   ]}
 
 -- | For figure7 the diverging *terms* matter more than content
@@ -85,93 +97,108 @@ figure6Log = Log { entries = V.fromList [
 -- because it's so easy to get lost and confused when just trying to *remember*
 -- what they are and predict interactions with them.
 figure7Leader :: Log Text
-figure7Leader = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "1" }
-  , LogEntry {term = terms !! 0, content = "2" }
-  , LogEntry {term = terms !! 0, content = "3" }
-  , LogEntry {term = terms !! 3, content = "4" }
-  , LogEntry {term = terms !! 3, content = "5" }
-  , LogEntry {term = terms !! 4, content = "6" }
-  , LogEntry {term = terms !! 4, content = "7" }
-  , LogEntry {term = terms !! 5, content = "8" }
-  , LogEntry {term = terms !! 5, content = "9" }
-  , LogEntry {term = terms !! 5, content = "10" }
+figure7Leader = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "1", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "2", index = indexes !! 1 }
+        , LogEntry {term = terms !! 0, content = "3", index = indexes !! 2 }
+        , LogEntry {term = terms !! 3, content = "4", index = indexes !! 3 }
+        , LogEntry {term = terms !! 3, content = "5", index = indexes !! 4 }
+        , LogEntry {term = terms !! 4, content = "6", index = indexes !! 5 }
+        , LogEntry {term = terms !! 4, content = "7", index = indexes !! 6 }
+        , LogEntry {term = terms !! 5, content = "8", index = indexes !! 7 }
+        , LogEntry {term = terms !! 5, content = "9", index = indexes !! 8 }
+        , LogEntry {term = terms !! 5, content = "10", index = indexes !! 9 }
   ]}
 
 figure7A :: Log Text
-figure7A = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "1" }
-  , LogEntry {term = terms !! 0, content = "2" }
-  , LogEntry {term = terms !! 0, content = "3" }
-  , LogEntry {term = terms !! 3, content = "4" }
-  , LogEntry {term = terms !! 3, content = "5" }
-  , LogEntry {term = terms !! 4, content = "6" }
-  , LogEntry {term = terms !! 4, content = "7" }
-  , LogEntry {term = terms !! 5, content = "8" }
-  , LogEntry {term = terms !! 5, content = "9" }
+figure7A = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "1", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "2", index = indexes !! 1 }
+        , LogEntry {term = terms !! 0, content = "3", index = indexes !! 2 }
+        , LogEntry {term = terms !! 3, content = "4", index = indexes !! 3 }
+        , LogEntry {term = terms !! 3, content = "5", index = indexes !! 4 }
+        , LogEntry {term = terms !! 4, content = "6", index = indexes !! 5 }
+        , LogEntry {term = terms !! 4, content = "7", index = indexes !! 6 }
+        , LogEntry {term = terms !! 5, content = "8", index = indexes !! 7 }
+        , LogEntry {term = terms !! 5, content = "9", index = indexes !! 8 }
   ]}
 
 figure7B :: Log Text
-figure7B = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "1" }
-  , LogEntry {term = terms !! 0, content = "2" }
-  , LogEntry {term = terms !! 0, content = "3" }
-  , LogEntry {term = terms !! 3, content = "4" }
+figure7B = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "1", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "2", index = indexes !! 1 }
+        , LogEntry {term = terms !! 0, content = "3", index = indexes !! 2 }
+        , LogEntry {term = terms !! 3, content = "4", index = indexes !! 3 }
   ]}
 
 figure7C :: Log Text
-figure7C = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "1" }
-  , LogEntry {term = terms !! 0, content = "2" }
-  , LogEntry {term = terms !! 0, content = "3" }
-  , LogEntry {term = terms !! 3, content = "4" }
-  , LogEntry {term = terms !! 3, content = "5" }
-  , LogEntry {term = terms !! 4, content = "6" }
-  , LogEntry {term = terms !! 4, content = "7" }
-  , LogEntry {term = terms !! 5, content = "8" }
-  , LogEntry {term = terms !! 5, content = "9" }
-  , LogEntry {term = terms !! 5, content = "10" }
-  , LogEntry {term = terms !! 5, content = "11" }
+figure7C = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "1", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "2", index = indexes !! 1 }
+        , LogEntry {term = terms !! 0, content = "3", index = indexes !! 2 }
+        , LogEntry {term = terms !! 3, content = "4", index = indexes !! 3 }
+        , LogEntry {term = terms !! 3, content = "5", index = indexes !! 4 }
+        , LogEntry {term = terms !! 4, content = "6", index = indexes !! 5 }
+        , LogEntry {term = terms !! 4, content = "7", index = indexes !! 6 }
+        , LogEntry {term = terms !! 5, content = "8", index = indexes !! 7 }
+        , LogEntry {term = terms !! 5, content = "9", index = indexes !! 8 }
+        , LogEntry {term = terms !! 5, content = "10", index = indexes !! 9 }
+        , LogEntry {term = terms !! 5, content = "11", index = indexes !! 10 }
   ]}
 
 figure7D :: Log Text
-figure7D = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "1" }
-  , LogEntry {term = terms !! 0, content = "2" }
-  , LogEntry {term = terms !! 0, content = "3" }
-  , LogEntry {term = terms !! 3, content = "4" }
-  , LogEntry {term = terms !! 3, content = "5" }
-  , LogEntry {term = terms !! 4, content = "6" }
-  , LogEntry {term = terms !! 4, content = "7" }
-  , LogEntry {term = terms !! 5, content = "8" }
-  , LogEntry {term = terms !! 5, content = "9" }
-  , LogEntry {term = terms !! 5, content = "10" }
-  , LogEntry {term = terms !! 6, content = "11" }
-  , LogEntry {term = terms !! 6, content = "12" }
-  ]}
+figure7D = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "1", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "2", index = indexes !! 1 }
+        , LogEntry {term = terms !! 0, content = "3", index = indexes !! 2 }
+        , LogEntry {term = terms !! 3, content = "4", index = indexes !! 3 }
+        , LogEntry {term = terms !! 3, content = "5", index = indexes !! 4 }
+        , LogEntry {term = terms !! 4, content = "6", index = indexes !! 5 }
+        , LogEntry {term = terms !! 4, content = "7", index = indexes !! 6 }
+        , LogEntry {term = terms !! 5, content = "8", index = indexes !! 7 }
+        , LogEntry {term = terms !! 5, content = "9", index = indexes !! 8 }
+        , LogEntry {term = terms !! 5, content = "10", index = indexes !! 9 }
+        , LogEntry {term = terms !! 6, content = "11", index = indexes !! 10 }
+        , LogEntry {term = terms !! 6, content = "12", index = indexes !! 11 }
+        ]
+    }
 
 figure7E :: Log Text
-figure7E = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "1" }
-  , LogEntry {term = terms !! 0, content = "2" }
-  , LogEntry {term = terms !! 0, content = "3" }
-  , LogEntry {term = terms !! 3, content = "4" }
-  , LogEntry {term = terms !! 3, content = "5" }
-  , LogEntry {term = terms !! 3, content = "6" }
-  , LogEntry {term = terms !! 3, content = "7" }
+figure7E = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "1", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "2", index = indexes !! 1 }
+        , LogEntry {term = terms !! 0, content = "3", index = indexes !! 2 }
+        , LogEntry {term = terms !! 3, content = "4", index = indexes !! 3 }
+        , LogEntry {term = terms !! 3, content = "5", index = indexes !! 4 }
+        , LogEntry {term = terms !! 3, content = "6", index = indexes !! 5 }
+        , LogEntry {term = terms !! 3, content = "7", index = indexes !! 6 }
   ]}
 
 figure7F :: Log Text
-figure7F = Log { entries = V.fromList [
-  LogEntry {term = terms !! 0, content = "1" }
-  , LogEntry {term = terms !! 0, content = "2" }
-  , LogEntry {term = terms !! 0, content = "3" }
-  , LogEntry {term = terms !! 1, content = "4" }
-  , LogEntry {term = terms !! 1, content = "5" }
-  , LogEntry {term = terms !! 1, content = "6" }
-  , LogEntry {term = terms !! 2, content = "7" }
-  , LogEntry {term = terms !! 2, content = "8" }
-  , LogEntry {term = terms !! 2, content = "9" }
-  , LogEntry {term = terms !! 2, content = "10" }
-  , LogEntry {term = terms !! 2, content = "11" }
+figure7F = Log {
+    offset = startLogIndex
+    , entries = V.fromList [
+        LogEntry {term = terms !! 0, content = "1", index = indexes !! 0 }
+        , LogEntry {term = terms !! 0, content = "2", index = indexes !! 1 }
+        , LogEntry {term = terms !! 0, content = "3", index = indexes !! 2 }
+        , LogEntry {term = terms !! 1, content = "4", index = indexes !! 3 }
+        , LogEntry {term = terms !! 1, content = "5", index = indexes !! 4 }
+        , LogEntry {term = terms !! 1, content = "6", index = indexes !! 5 }
+        , LogEntry {term = terms !! 2, content = "7", index = indexes !! 6 }
+        , LogEntry {term = terms !! 2, content = "8", index = indexes !! 7 }
+        , LogEntry {term = terms !! 2, content = "9", index = indexes !! 8 }
+        , LogEntry {term = terms !! 2, content = "10", index = indexes !! 9 }
+        , LogEntry {term = terms !! 2, content = "11", index = indexes !! 10 }
   ]}

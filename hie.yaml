@@ -1,0 +1,8 @@
+cradle:
+  cabal:
+    - path: "./src"
+      component: "lib:raft"
+    - path: "./app"
+      component: "exe:raft"
+    - path: "./tests/Spec.hs"
+      component: "test:raft-test"

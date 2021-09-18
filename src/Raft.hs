@@ -70,7 +70,7 @@ handleAppendEntries msg server@(Follower serverId state log') =
     let
         msgTermValid = getField @"term" msg >= getField @"currentTerm" state
         success = msgTermValid && appendReqCheckLogOk msg log'
-        (log'', success') = appendEntries log' (logEntries msg) (prevLogIndex msg) (prevLogTerm msg)
+        (log'', success') = appendEntries (prevLogIndex msg) (prevLogTerm msg) (logEntries msg)  log'
         -- Make sure to reset any previous votedFor status
         state' = if success' then resetFollowerVotedFor state else state
         response = mkAppendEntriesResponse success msg state'
@@ -143,7 +143,7 @@ appendReqCheckLogOk req log'
     | otherwise =
          prevIndex > startLogIndex
             && prevIndex <= nextLogIndex log'
-                && prevLogTerm req == logTermAtIndex log' prevIndex
+                && prevLogTerm req == logTermAtIndex prevIndex log'
     where prevIndex = prevLogIndex req
 
 

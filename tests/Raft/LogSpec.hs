@@ -8,39 +8,71 @@ import Data.Text (Text)
 import qualified Data.Vector as V
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
-import Test.QuickCheck (Property, ioProperty, property, (===))
+import Test.QuickCheck (Property, counterexample, property, (===), (.||.))
 
 import Raft.Log
 import SpecFixtures
 
+
 prop_clearStaleEntriesEmptyLog :: V.Vector (LogEntry Bool) -> Property
 prop_clearStaleEntriesEmptyLog entries' = do
-    let clearedEntries = clearStaleEntriesAndAppend startLogIndex (Log {entries = V.empty}) entries'
-    property $ clearedEntries === entries'
+    let
+      emptyLog = Log {entries = V.empty, offset = startLogIndex}
+      clearedEntries = clearStaleEntriesAndAppend (incrementLogIndex startLogIndex) entries' emptyLog
+    property $ (entries clearedEntries) === entries'
 
+-- | The resulting Vector _should not be_ shorter than `newEntries` passed in
 prop_clearStaleEntriesLengthConsistent :: ArbLogWithIndex Bool -> V.Vector (LogEntry Bool) -> Property
-prop_clearStaleEntriesLengthConsistent arbLgIdx entries' = do
+prop_clearStaleEntriesLengthConsistent arbLgIdx newEntries = do
     let idx = lgIndex arbLgIdx
         log' = lg arbLgIdx
-        clearedEntries = clearStaleEntriesAndAppend idx log' entries'
-    property $ (V.length clearedEntries) >= V.length entries'
+        origEntries = entries log'
+        clearedEntries = entries $ clearStaleEntriesAndAppend idx newEntries log'
+        newTotalLength = V.length clearedEntries
+        addedEntriesLength = V.length newEntries
+        propCounterEx = counterexample $ mconcat [
+          "\nCleared Entries Length: \t"
+          , (show newTotalLength)
+          , "\n New Entries Input Length: \t"
+          , (show addedEntriesLength)
+          , "\nCleared Entries Value: \t"
+          , (show clearedEntries)
+          ]
+    -- no change scenario: when the indexes don't match up
+    propCounterEx .  property $ (origEntries == clearedEntries) || (newTotalLength >= addedEntriesLength)
 
 prop_clearStaleEntriesTailConsistent :: ArbLogWithIndex Bool -> V.Vector (LogEntry Bool) -> Property
-prop_clearStaleEntriesTailConsistent arbLgIdx entries' = do
+prop_clearStaleEntriesTailConsistent arbLgIdx newEntries = do
   let idx = lgIndex arbLgIdx
       log' = lg arbLgIdx
-      clearedEntries = clearStaleEntriesAndAppend idx log' entries'
-  case idx of
-    startLogIndex -> clearedEntries === entries'
-    _ -> (V.drop (logIndexToVectorIndex idx) clearedEntries) === entries'
+      origEntries = entries log'
+      setEntriesLog = V.imap (\ix e -> e { index = idx + (fromJust . mkLogIndex $ ix) }) newEntries
+      takeLen = logIndexToInt $ idx - 1 - (offset log')
+      clearedEntries = entries $ clearStaleEntriesAndAppend idx setEntriesLog log'
+      newTotalLength = V.length clearedEntries
+      clearedTail = V.drop takeLen clearedEntries
+      propCounterEx = counterexample $ mconcat [
+          "\nEntry Index: \t"
+          , (show $ logIndexToInt idx)
+          , "\nLog Offset: \t"
+          , (show $ offset log')
+          , "\nCleared Entries Length: \t"
+          , (show newTotalLength)
+          , "\nTaking the first " ++ show takeLen ++ " Entries"
+          , "\nPutting these ones in: \t"
+          , (show setEntriesLog)
+          , "\nCleared Entries Value: \t"
+          , (show clearedEntries)
+          ]
+  propCounterEx $
+    if takeLen <= 0
+      then clearedEntries === setEntriesLog
+      else clearedTail === setEntriesLog
 
 
 logSpec :: Spec
 logSpec = do
   describe "incrementLogIndex" $ do
-    prop "isomoprhic logIndexToVectorIndex with incrementLogIndex" $
-        let maybeN n = logIndexToVectorIndex . incrementLogIndex <$> mkLogIndex n
-        in \n -> if n >= 0 then maybeN n == Just n else maybeN n == Nothing
     prop "incrementLogIndex is LogIndex +1" $
       let maybeN n = incrementLogIndex <$> mkLogIndex n
       in \n -> if n >= 0 then maybeN n == mkLogIndex (n + 1) else maybeN n == Nothing
@@ -56,11 +88,8 @@ logSpec = do
   -- We will assert these rules are maintained after invoking our functions
   describe "Section §5.3: Log Matching Property with clearStaleEntriesAndAppend: " $ do
 
-    -- I dont think this test makes any sense. TODO: Rethink this.
-    -- it "Should handle empty entries" $ property prop_clearStaleEntriesEmptyEntries
-
     it "Should handle an empty log to start" $ property prop_clearStaleEntriesEmptyLog
 
     it "Log length >= new entries length" $ property prop_clearStaleEntriesLengthConsistent
 
-    it "newEntries == Tail of Existing" $ property prop_clearStaleEntriesTailConsistent
+    it "newEntries == tail of existing log" $ property prop_clearStaleEntriesTailConsistent
