@@ -131,7 +131,7 @@ takeTo :: LogIndex -> Log a -> Either Text (LogEntries a)
 takeTo entryIndex log' =
     checkTakeBounds entryIndex log' >> Right truncatedVec
     where
-        takeLen = logIndexToInt $ entryIndex - 1 - (offset log')
+        takeLen = logIndexToVectorIndex $ entryIndex - (offset log')
         truncatedVec = V.take takeLen (entries log')
 
 checkTakeBounds :: LogIndex -> Log a -> Either Text ()

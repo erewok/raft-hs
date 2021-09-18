@@ -34,7 +34,7 @@ import GHC.Records (HasField(..))
 import Raft.Log
 import Raft.Message
 import Raft.Server
-
+import Raft.Shared
 
 
 -- | Events may trigger state changes or requests.
@@ -52,99 +52,6 @@ data Moment =
     Tick
     | Heartbeat
     | ElectionTimeout
-
--- | Functions to generate RPCs:
--- Candidates generate RequestVoteRPCs.
--- Leaders generate AppendEntriesRPCs.
-generateAppendEntriesRPC :: [ServerId] -> ServerId -> LeaderState -> Log a -> AppendEntriesRPC a
-generateAppendEntriesRPC serverList leaderId state log' = undefined
-
-generateRequestVoteRPC :: [ServerId] -> ServerId -> CandidateState -> Log a -> RequestVoteRPC
-generateRequestVoteRPC serverList candidateId state log' = undefined
-
--- | Receipt of RPCs means some state change and possibly a server change.
---  Here, we handle the append entries RPC which will be sent by the leader
--- to all other servers.
-handleAppendEntries :: AppendEntriesRPC a -> Server a -> (AppendEntriesResponseRPC, Server a)
-handleAppendEntries msg server@(Follower serverId state log') =
-    let
-        msgTermValid = getField @"term" msg >= getField @"currentTerm" state
-        success = msgTermValid && appendReqCheckLogOk msg log'
-        (log'', success') = appendEntries (prevLogIndex msg) (prevLogTerm msg) (logEntries msg)  log'
-        -- Make sure to reset any previous votedFor status
-        state' = if success' then resetFollowerVotedFor state else state
-        response = mkAppendEntriesResponse success msg state'
-        server' = Follower serverId state' log''
-    in
-        (response, server')
-handleAppendEntries msg server@(Candidate serverId state _) =
-    let
-        msgTermValid = getField @"term" msg == getField @"currentTerm" state
-        server'@(Follower _ state' _) = convertToFollower server
-        response = mkAppendEntriesResponse False msg state'
-    in
-        (response, server')
-handleAppendEntries msg server@(Leader serverId state _) =
-    let
-        msgTermValid = getField @"term" msg >= getField @"currentTerm" state
-    in
-        undefined
-
--- | This function handles the request vote RPC.
-handleRequestVote :: RequestVoteRPC -> Server a -> (RequestVoteResponseRPC, Server a)
-handleRequestVote request server = undefined
-
--- | Here servers will translate a request into a response
-mkAppendEntriesResponse :: Bool -> AppendEntriesRPC a -> FollowerState -> AppendEntriesResponseRPC
-mkAppendEntriesResponse successful request state =
-    let
-        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
-        resp = AppendEntriesResponseRPC {
-            sourceAndDest = senderRecvr
-            , matchIndex = getField @"commitIndex" request
-            , success = successful
-            , term = getField @"currentTerm" state
-        }
-    in resp
-
-mkRequestVoteResponse :: Bool -> RequestVoteRPC -> Server a -> RequestVoteResponseRPC
-mkRequestVoteResponse granted request (Follower _ state _) =
-    let
-        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
-        resp = RequestVoteResponseRPC {
-            sourceAndDest = senderRecvr
-            , voteGranted = granted
-            , term = getField @"currentTerm" state
-        }
-    in resp
-mkRequestVoteResponse granted request (Candidate _ state _) =
-    let
-        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
-        resp = RequestVoteResponseRPC {
-            sourceAndDest = senderRecvr
-            , voteGranted = granted
-            , term = getField @"currentTerm" state
-        }
-    in resp
-mkRequestVoteResponse granted request (Leader _ state _) =
-    let
-        senderRecvr = swapSourceAndDest (getField @"sourceAndDest" request)
-        resp = RequestVoteResponseRPC {
-            sourceAndDest = senderRecvr
-            , voteGranted = granted
-            , term = getField @"currentTerm" state
-        }
-    in resp
-
--- | Check append entries request has expected log
-appendReqCheckLogOk :: AppendEntriesRPC a -> Log a -> Bool
-appendReqCheckLogOk req log'
-    | prevIndex == startLogIndex = True
-    | otherwise =
-         prevIndex > startLogIndex
-            && prevIndex <= nextLogIndex log'
-                && prevLogTerm req == logTermAtIndex prevIndex log'
-    where prevIndex = prevLogIndex req
 
 
 -- | Outbound communication with other nodes using channels

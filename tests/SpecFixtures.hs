@@ -12,6 +12,24 @@ import qualified Data.Vector as V
 import Test.QuickCheck (Arbitrary(..), Gen, chooseInt)
 
 import Raft.Log
+import Raft.Message
+import Raft.Server
+import Raft.Shared
+
+
+-- | Server Generators
+instance Arbitrary ServerId where
+    arbitrary = ServerId <$> chooseInt (1, 20)
+
+
+-- | Message Generators
+instance Arbitrary SourceDest where
+    arbitrary = do
+        source <- ServerId <$> chooseInt (1, 4)
+        dest <-   ServerId <$> chooseInt (5, 8)
+        pure $ SourceDest{..}
+
+
 
 -- | Log Generators
 -- We will apply the following rule for these:
@@ -62,7 +80,7 @@ instance (Eq a, Arbitrary a) => Arbitrary (ArbLogWithIndex a) where
 
 -- | We need this instance to produce a vector where terms are increasing
 instance (Eq a) => Ord (LogEntry a) where
-    compare left right = compare (term left) (term right)
+    compare left right = compare (getTerm left) (getTerm right)
 
 -- | Setup functions for building datasets
 terms :: [LogTerm]
@@ -77,8 +95,8 @@ indexes = map indexMakerUnsafe [1..]
 indexMakerUnsafe :: Int -> LogIndex
 indexMakerUnsafe n = fromJust . mkLogIndex $ n
 
-
--- | Log from Figure 6 in the paper
+-- | Sample Logs are below
+-- Log from Figure 6 in the paper
 figure6Log :: Log Text
 figure6Log = Log {
     offset = startLogIndex

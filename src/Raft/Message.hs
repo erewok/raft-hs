@@ -1,10 +1,17 @@
+{-# LANGUAGE DataKinds                     #-}
 {-# LANGUAGE DuplicateRecordFields         #-}
+{-# LANGUAGE FlexibleContexts              #-}
+{-# LANGUAGE OverloadedLabels              #-}
+{-# LANGUAGE TypeApplications              #-}
+
 
 module Raft.Message where
 
 import qualified Data.Vector as V
+import GHC.Records
+
 import Raft.Log
-import Raft.Server
+import Raft.Shared
 
 -- | Raft defines the following RPC types:
 --  Append Entries request, append Entries response,
@@ -60,3 +67,16 @@ swapSourceAndDest input = input {
     source = dest input
     , dest = source input
     }
+
+-- | We pull these terms out a lot, so these aliases are useful
+getTerm :: HasField "term" r LogTerm => r -> LogTerm
+getTerm r = getField @"term" r
+
+getSourceAndDest :: HasField "sourceAndDest" r SourceDest => r -> SourceDest
+getSourceAndDest r = getField @"sourceAndDest" r
+
+getSource :: HasField "sourceAndDest" r SourceDest => r -> ServerId
+getSource = source . getSourceAndDest
+
+getDest :: HasField "sourceAndDest" r SourceDest => r -> ServerId
+getDest = dest . getSourceAndDest

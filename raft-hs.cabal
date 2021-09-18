@@ -23,7 +23,8 @@ Library
     Exposed-Modules:  Raft                ,
                       Raft.Log            ,
                       Raft.Message        ,
-                      Raft.Server
+                      Raft.Server         ,
+                      Raft.Shared
     Build-Depends:
                     base                  ,
                     containers            ,
@@ -49,5 +50,6 @@ test-suite raft-test
                     text                ,
                     vector
   Other-Modules:   Raft.LogSpec         ,
+                   Raft.MessageSpec     ,
                    SpecFixtures
   default-language: Haskell2010
