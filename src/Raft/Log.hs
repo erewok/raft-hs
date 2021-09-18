@@ -124,7 +124,7 @@ clearStaleEntriesAndAppend entryIndex newEntries log'
     -- Conflict case 2: log is partially stale: slice existing good entries and append new
     | otherwise =
         case takeTo entryIndex log' of
-            Left err -> log'
+            Left _ -> log'
             Right entriesTruncated -> log' { entries = V.concat [ entriesTruncated, newEntries ] }
 
 takeTo :: LogIndex -> Log a -> Either Text (LogEntries a)
@@ -141,23 +141,8 @@ checkTakeBounds entryIndex log'
     | otherwise = Right ()
     where takeLen = logIndexToInt $ entryIndex - (offset log') - 1
 
-slice :: LogIndex -> LogIndex -> Log a -> Either Text (LogEntries a)
-slice lo hi log' =
-    checkSliceBounds lo sliceLen log' >> Right slicedEntries
-    where
-        sliceLen = hi - lo
-        slicedEntries = V.slice (logIndexToVectorIndex lo) (logIndexToInt sliceLen) (entries log')
 
-
-checkSliceBounds :: LogIndex -> LogIndex -> Log a -> Either Text ()
-checkSliceBounds lo len log'
-    | lo < 0 = Left "Slice bound lo is negative"
-    | lo < offset log' = Left "Slice bound lo is lower than offset for log"
-    | len <= 0 = Left "Slice length is not a positive int"
-    | logIndexToInt len > V.length (entries log') = Left "Slice length is longer than log"
-    | otherwise = Right ()
-
--- | Utilities for slicing into the log to discover
+-- | Utilities for indexing into the log to discover
 --  terms, indices, etc.
 -- Note: we follow the Raft paper here and use 1-based indexing!
 -- | Retrieves the term of the last item in the log or 0 if log is empty.
@@ -191,9 +176,9 @@ incrementLogIndex (LIndex n) = LIndex (n + 1)
 
 -- | Locating an entry in a log involves matching on the index
 getLogEntry :: LogIndex -> LogEntries a -> Maybe (LogEntry a)
-getLogEntry idx entries =
+getLogEntry idx entries' =
     let
-        entry = entries !? logIndexToVectorIndex idx
+        entry = entries' !? logIndexToVectorIndex idx
         justIdx = index <$> entry
         result = if justIdx == Just idx then entry else Nothing
     in result

@@ -45,7 +45,6 @@ prop_clearStaleEntriesTailConsistent :: ArbLogWithIndex Bool -> V.Vector (LogEnt
 prop_clearStaleEntriesTailConsistent arbLgIdx newEntries = do
   let idx = lgIndex arbLgIdx
       log' = lg arbLgIdx
-      origEntries = entries log'
       setEntriesLog = V.imap (\ix e -> e { index = idx + (fromJust . mkLogIndex $ ix) }) newEntries
       takeLen = logIndexToInt $ idx - 1 - (offset log')
       clearedEntries = entries $ clearStaleEntriesAndAppend idx setEntriesLog log'
