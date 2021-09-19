@@ -20,6 +20,7 @@ module Raft.Log (
     , incrementLogTerm
     , logIndexToInt
     , logIndexToVectorIndex
+    , logIsBehindOrEqual
     , logLastIndex
     , logLastTerm
     , logTermAtIndex
@@ -161,6 +162,18 @@ logTermAtIndex idx log' =
 -- | Get the length of a log using the offset
 logLastIndex :: Log a -> LogIndex
 logLastIndex log' = (+) (offset log') (LIndex . V.length . entries $ log')
+
+-- | Given a Term and an Index, check if Log is more up-to-date than these.
+-- If the logs end with different terms, then the log ending on the
+-- later term is more up-to-date. If the logs end with the same term,
+-- then the log with the larger last index is more up-to-date.
+-- If the logs are the same, the log is up-to-date.
+logIsBehindOrEqual :: LogTerm -> LogIndex -> Log a -> Bool
+logIsBehindOrEqual lterm idx log'
+    | lterm > logLastTerm log' = True
+    | lterm == logLastTerm log' && idx >= logLastIndex log' = True
+    | otherwise = False
+
 
 -- | Next index for the log
 nextLogIndex :: Log a -> LogIndex
