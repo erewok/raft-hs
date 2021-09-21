@@ -1,6 +1,6 @@
 cabal-version:      2.4
 name:               raft
-version:            0.1.0.0
+version:            0.1.0.1
 author:             Erik Aker
 maintainer:         eraker@gmail.com
 license:            BSD-3-Clause
