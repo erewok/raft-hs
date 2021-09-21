@@ -47,7 +47,7 @@ checkCandidate = do
             HS.fromList (map RM.getDest requestVotes) `shouldBe` HS.difference allServers (HS.fromList [serverId])
             map RM.lastLogTerm requestVotes `shouldBe` replicate expectedLen (RL.logLastTerm log')
             map RM.lastLogIndex requestVotes `shouldBe` replicate expectedLen (RL.logLastIndex log')
-            map (getField @"term") requestVotes `shouldBe` replicate expectedLen (getServerTerm state)
+            map (getField @"term") requestVotes `shouldBe` replicate expectedLen (getStateTerm state)
         it "A Leader will not generate RequestVoteRPC" $ do
             generateRequestVoteRPCList fig7ServerLeader `shouldBe` []
         it "A Follower will not generate RequestVoteRPC" $ do
