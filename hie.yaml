@@ -6,3 +6,7 @@ cradle:
       component: "exe:raft"
     - path: "./tests/Spec.hs"
       component: "test:raft-test"
+    - path: "./tests/SpecFixtures.hs"
+      component: "test:raft-test"
+    - path: "./tests/Raft"
+      component: "test:raft-test"

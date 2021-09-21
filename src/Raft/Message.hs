@@ -7,10 +7,10 @@
 module Raft.Message where
 
 import qualified Data.Vector as V
-import GHC.Records
+import GHC.Records ( HasField(..) )
 
-import Raft.Log
-import Raft.Shared
+import Raft.Log ( LogEntry, LogIndex, LogTerm )
+import Raft.Shared ( ServerId )
 
 {- | Raft defines the following RPC types:
   Append Entries request, append Entries response,
