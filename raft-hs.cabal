@@ -51,5 +51,6 @@ test-suite raft-test
                     vector
   Other-Modules:   Raft.LogSpec         ,
                    Raft.MessageSpec     ,
+                   Raft.ServerSpec      ,
                    SpecFixtures
   default-language: Haskell2010
