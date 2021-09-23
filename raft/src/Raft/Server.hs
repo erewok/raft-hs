@@ -30,12 +30,11 @@ import Raft.Shared (ServerId)
 --     | Candidate ServerId CandidateState (RL.Log a)
 --     | Leader ServerId LeaderState (RL.Log a)
 
-data ServerType = ServerFollower | ServerCandidate | ServerLeader
+data ServerType = Follower | Candidate | Leader
 data Server (s :: ServerType) a where
-    Follower :: ServerId -> FollowerState -> RL.Log a -> Server 'ServerFollower a
-    Candidate :: ServerId -> CandidateState -> RL.Log a -> Server 'ServerCandidate a
-    Leader :: ServerId -> LeaderState -> RL.Log a -> Server 'ServerLeader a
-
+    Fol :: ServerId -> FollowerState -> RL.Log a -> Server 'Follower a
+    Cand :: ServerId -> CandidateState -> RL.Log a -> Server 'Candidate a
+    Lead :: ServerId -> LeaderState -> RL.Log a -> Server 'Leader a
 
 -- | FollowerState is the state recorded for each follower
 data FollowerState = FollowerState
@@ -78,8 +77,8 @@ data LeaderState = LeaderState
   A Leader may become a Follower.
   First, we define the state transition *to* a candidate.
 -}
-convertToCandidate :: Server t a -> Server 'ServerCandidate a
-convertToCandidate server@(Follower serverId followerState log') =
+convertFollowerToCandidate :: Server 'Follower a -> Server 'Candidate a
+convertFollowerToCandidate server@(Fol serverId followerState log') =
     let votesResponded' = HS.fromList [serverId]
         votesGranted' = HS.fromList [serverId]
         newState =
@@ -91,8 +90,9 @@ convertToCandidate server@(Follower serverId followerState log') =
                 , votesResponded = votesResponded'
                 , votesGranted = votesGranted'
                 }
-     in Candidate serverId newState log'
-convertToCandidate server@(Candidate serverId candidateState log') =
+     in Cand serverId newState log'
+convertCandidateToCandidate :: Server 'Candidate a -> Server 'Candidate a
+convertCandidateToCandidate server@(Cand serverId candidateState log') =
     let
         votesResponded' = HS.fromList [serverId]
         votesGranted' = HS.fromList [serverId]
@@ -101,14 +101,14 @@ convertToCandidate server@(Candidate serverId candidateState log') =
             , votesResponded = votesResponded'
             , votesGranted = votesGranted'
             } :: CandidateState
-     in Candidate serverId newState log'
+     in Cand serverId newState log'
 -- convertToCandidate server = server -- Leaders cannot be converted into candidates
 
 {- |  Here, we convert a server to a leader.
  Only a Candidate may be converted
 -}
-convertToLeader :: Server 'ServerCandidate a -> Server 'ServerLeader a
-convertToLeader (Candidate serverId candidateState log') =
+convertToLeader :: Server 'Candidate a -> Server 'Leader a
+convertToLeader (Cand serverId candidateState log') =
     let serverIds = getField @"allServerIds" candidateState
         serverIdList = HS.toList serverIds
         newState =
@@ -120,7 +120,7 @@ convertToLeader (Candidate serverId candidateState log') =
                 , nextIndex = HM.fromList $ map (\s -> (s, RL.nextLogIndex log')) serverIdList
                 , matchIndex = HM.fromList $ map (\s -> (s, RL.startLogIndex)) serverIdList
                 }
-     in Leader serverId newState log'
+     in Lead serverId newState log'
 -- convertToLeader server = server
 
 {- | After a RequestVoteResponse has been returned, we need to evaluate whether
@@ -128,8 +128,8 @@ convertToLeader (Candidate serverId candidateState log') =
  If the election timeout happens again, the Candidate may
  call another election and convert itself to a *new* Candidate.
 -}
-maybePromoteCandidate :: Server 'ServerCandidate a -> Server t a
-maybePromoteCandidate server@(Candidate _ candidateState _)
+maybePromoteCandidate :: Server 'Candidate a -> Server t a
+maybePromoteCandidate server@(Cand _ candidateState _)
     | hasQuorum respondedVotes && hasQuorum grantedVotes = convertToLeader server
     | hasQuorum respondedVotes && (not . hasQuorum $ grantedVotes) = convertToFollower server
     | otherwise = server
@@ -151,8 +151,8 @@ calcQuorum serverIds = div (HS.size serverIds) 2 + 1
   Only a Candidate or a Leader may be converted.
   A Follower is returned unchanged.
 -}
-convertToFollower :: Server t a -> Server 'ServerFollower a
-convertToFollower (Candidate serverId candidateState log') =
+convertToFollower :: Server t a -> Server 'Follower a
+convertToFollower (Cand serverId candidateState log') =
     let newState =
             FollowerState
                 { currentTerm = getStateTerm candidateState
@@ -162,8 +162,8 @@ convertToFollower (Candidate serverId candidateState log') =
                 , votedFor = Nothing
                 , currentLeader = Nothing
                 }
-     in Follower serverId newState log'
-convertToFollower (Leader serverId leaderState log') =
+     in Fol serverId newState log'
+convertToFollower (Lead serverId leaderState log') =
     let newState =
             FollowerState
                 { currentTerm = getStateTerm leaderState
@@ -173,8 +173,8 @@ convertToFollower (Leader serverId leaderState log') =
                 , votedFor = Nothing
                 , currentLeader = Nothing
                 }
-     in Follower serverId newState log'
-convertToFollower follower@Follower {} = follower
+     in Fol serverId newState log'
+convertToFollower follower@Fol {} = follower
 
 {- | Receipt of RPCs means some state change and possibly a server change.
   Here, we handle the append entries RPC which should be sent by the supposed leader
@@ -182,7 +182,7 @@ convertToFollower follower@Follower {} = follower
  Note: only a Follower will update its log in response to the AppendEntriesRPC.
 -}
 handleAppendEntries :: RM.AppendEntriesRPC a -> Server t a -> (Maybe RM.AppendEntriesResponseRPC, Server u a)
-handleAppendEntries msg (Follower serverId state serverLog) =
+handleAppendEntries msg (Fol serverId state serverLog) =
     let msgTerm = getField @"term" msg
         msgTermValid = msgTerm >= getStateTerm state
         (updatedLog, success') =
@@ -191,13 +191,13 @@ handleAppendEntries msg (Follower serverId state serverLog) =
                 else (serverLog, False)
         -- Make sure to reset any previous votedFor status
         state' = appendEntriesUpdateState msg success' (RL.logLastIndex updatedLog) state
-        server' = updateServerTerm msgTerm (Follower serverId state' updatedLog)
+        server' = updateServerTerm msgTerm (Fol serverId state' updatedLog)
         response = Just $ mkAppendEntriesResponse success' msg server'
      in (response, server')
-handleAppendEntries msg server@(Candidate _ state _)
+handleAppendEntries msg server@(Cand _ state _)
     | getField @"term" msg > getStateTerm state = handleAppendEntries msg (convertToFollower server)
     | otherwise = (Nothing, server)
-handleAppendEntries msg server@(Leader _ state _)
+handleAppendEntries msg server@(Lead _ state _)
     | getField @"term" msg > getStateTerm state = handleAppendEntries msg (convertToFollower server)
     | otherwise = (Nothing, server)
 
@@ -226,7 +226,7 @@ appendReqCheckLogOk req log'
 
 -- | A Leader upon receiving an RM.AppendEntriesResponseRPC must update its state
 handleAppendEntriesResponse :: RM.AppendEntriesResponseRPC -> Server t a -> Server t a
-handleAppendEntriesResponse response server@(Leader serverId state serverLog) = undefined
+handleAppendEntriesResponse response server@(Lead serverId state serverLog) = undefined
 handleAppendEntriesResponse _ server = server
 
 -- | Leaders generate AppendEntriesRPCs.
@@ -234,7 +234,7 @@ generateAppendEntriesRPC :: ServerId -> Server t a -> Maybe (RM.AppendEntriesRPC
 generateAppendEntriesRPC recvr server = Nothing
 
 generateAppendEntriesRPCList :: Server t a -> [RM.AppendEntriesRPC a]
-generateAppendEntriesRPCList server@(Leader serverId state log') = undefined -- don't send to self!
+generateAppendEntriesRPCList server@(Lead serverId state log') = undefined -- don't send to self!
 generateAppendEntriesRPCList server = []
 
 {- | This function handles the request vote RPC. Followers can vote.
@@ -242,18 +242,18 @@ generateAppendEntriesRPCList server = []
  The same may happen if it's a Leader.
 -}
 handleRequestVote :: RM.RequestVoteRPC -> Server t a -> (Maybe RM.RequestVoteResponseRPC, Server u a)
-handleRequestVote request (Follower serverId state serverLog) =
+handleRequestVote request (Fol serverId state serverLog) =
     let msgTerm = RM.getTerm request
         msgTermValid = msgTerm >= getStateTerm state
         candidateIsUpToDate = msgTermValid && RL.logIsBehindOrEqual (getField @"lastLogTerm" request) (getField @"lastLogIndex" request) serverLog
         (voted, state') = if candidateIsUpToDate then voteForServer request state else (False, state)
-        server' = updateServerTerm msgTerm (Follower serverId state' serverLog)
+        server' = updateServerTerm msgTerm (Fol serverId state' serverLog)
         response = mkRequestVoteResponse voted request server'
      in (Just response, server')
-handleRequestVote request server@(Candidate _ state _)
+handleRequestVote request server@(Cand _ state _)
     | RM.getTerm request > getStateTerm state = handleRequestVote request (convertToFollower server)
     | otherwise = (Just $ mkRequestVoteResponse False request server, server)
-handleRequestVote request server@(Leader _ state _)
+handleRequestVote request server@(Lead _ state _)
     | RM.getTerm request > getStateTerm state = handleRequestVote request (convertToFollower server)
     | otherwise = (Nothing, server)
 
@@ -271,8 +271,8 @@ voteForServer request state
 {- | A Candidate upon receiving a RM.RequestVoteResponseRPC must update its state
  If it wins an election, it should be converted to a leader.
 -}
-handleRequestVoteResponse :: RM.RequestVoteResponseRPC -> Server 'ServerCandidate a -> Server t a
-handleRequestVoteResponse response (Candidate serverId state serverLog) =
+handleRequestVoteResponse :: RM.RequestVoteResponseRPC -> Server 'Candidate a -> Server t a
+handleRequestVoteResponse response (Cand serverId state serverLog) =
     -- Q: Should the Candidate *check* that this respondent is a *member* of this cluster?
     let respondent = RM.getSource response
         state' = state{votesResponded = HS.insert respondent (votesResponded state)}
@@ -280,12 +280,12 @@ handleRequestVoteResponse response (Candidate serverId state serverLog) =
             if RM.voteGranted response
                 then state'{votesGranted = HS.insert respondent (votesGranted state')}
                 else state'
-     in maybePromoteCandidate (Candidate serverId state'' serverLog)
-handleRequestVoteResponse _ server = server
+     in maybePromoteCandidate (Cand serverId state'' serverLog)
+-- handleRequestVoteResponse _ server = server
 
 -- | Candidates generate RequestVoteRPCs for each server and send them in parallel.
-generateRequestVoteRPC :: Server 'ServerCandidate a -> ServerId -> Maybe RM.RequestVoteRPC
-generateRequestVoteRPC (Candidate serverId state serverLog) recvr =
+generateRequestVoteRPC :: Server 'Candidate a -> ServerId -> Maybe RM.RequestVoteRPC
+generateRequestVoteRPC (Cand serverId state serverLog) recvr =
     Just $
         RM.RequestVoteRPC
             { RM.sourceAndDest = RM.SourceDest{RM.source = serverId, RM.dest = recvr}
@@ -293,33 +293,33 @@ generateRequestVoteRPC (Candidate serverId state serverLog) recvr =
             , RM.lastLogIndex = RL.logLastIndex serverLog
             , RM.term = getStateTerm state
             }
-generateRequestVoteRPC _ _ = Nothing
+-- generateRequestVoteRPC _ _ = Nothing
 
 -- | We can generate all RequestVoteRPCs by mapping over the list of Server IDs (not including this one)
-generateRequestVoteRPCList :: Server 'ServerCandidate a -> [RM.RequestVoteRPC]
-generateRequestVoteRPCList server@(Candidate serverId state _) =
+generateRequestVoteRPCList :: Server 'Candidate a -> [RM.RequestVoteRPC]
+generateRequestVoteRPCList server@(Cand serverId state _) =
     mapMaybe (generateRequestVoteRPC server) . HS.toList $
         HS.difference (getField @"allServerIds" state) (HS.fromList [serverId])
-generateRequestVoteRPCList _ = []
+-- generateRequestVoteRPCList _ = []
 
 {- | Any message received from a server with a term greater than this server's
  means this server must *immediately* update its term to the latest.
  This comes from Raft paper §5.1.
 -}
 updateServerTerm :: RL.LogTerm -> Server t a -> Server t a
-updateServerTerm t (Follower serverId serverState log') = Follower serverId state' log'
+updateServerTerm t (Fol serverId serverState log') = Fol serverId state' log'
   where
     state' =
         if t > getStateTerm serverState
             then serverState{currentTerm = t} :: FollowerState
             else serverState
-updateServerTerm t (Candidate serverId serverState log') = Candidate serverId state' log'
+updateServerTerm t (Cand serverId serverState log') = Cand serverId state' log'
   where
     state' =
         if t > getStateTerm serverState
             then serverState{currentTerm = t} :: CandidateState
             else serverState
-updateServerTerm t (Leader serverId serverState log') = Leader serverId state' log'
+updateServerTerm t (Lead serverId serverState log') = Lead serverId state' log'
   where
     state' =
         if t > getStateTerm serverState
@@ -328,10 +328,10 @@ updateServerTerm t (Leader serverId serverState log') = Leader serverId state' l
 
 -- | Candidates or Followers will need to *increment* their term when an election begins
 incrementServerLogTerm :: Server t a -> RL.LogTerm
-incrementServerLogTerm (Follower _ state _) = RL.incrementLogTerm . getStateTerm $ state
-incrementServerLogTerm (Candidate _ state _) = RL.incrementLogTerm . getStateTerm $ state
+incrementServerLogTerm (Fol _ state _) = RL.incrementLogTerm . getStateTerm $ state
+incrementServerLogTerm (Cand _ state _) = RL.incrementLogTerm . getStateTerm $ state
 -- Leader's log term must not be incremented: they do not start elections.
-incrementServerLogTerm (Leader _ state _) = getStateTerm state
+incrementServerLogTerm (Lead _ state _) = getStateTerm state
 
 -- | We pull this term out a lot, so this alias is useful
 getStateTerm :: HasField "currentTerm" r RL.LogTerm => r -> RL.LogTerm
@@ -341,21 +341,21 @@ getStateTerm = getField @"currentTerm"
  | Only a follower should reply to an AppendEntriesRPC
 -}
 mkAppendEntriesResponse :: Bool -> RM.AppendEntriesRPC a -> Server t a -> RM.AppendEntriesResponseRPC
-mkAppendEntriesResponse successful request (Follower _ state serverLog) =
+mkAppendEntriesResponse successful request (Fol _ state serverLog) =
     RM.AppendEntriesResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
         , matchIndex = RL.logLastIndex serverLog
         , success = successful
         , term = getStateTerm state
         }
-mkAppendEntriesResponse _ request (Candidate _ state serverLog) =
+mkAppendEntriesResponse _ request (Cand _ state serverLog) =
     RM.AppendEntriesResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
         , matchIndex = RL.logLastIndex serverLog
         , success = False
         , term = getStateTerm state
         }
-mkAppendEntriesResponse _ request (Leader _ state serverLog) =
+mkAppendEntriesResponse _ request (Lead _ state serverLog) =
     RM.AppendEntriesResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
         , matchIndex = RL.logLastIndex serverLog
@@ -365,19 +365,19 @@ mkAppendEntriesResponse _ request (Leader _ state serverLog) =
 
 -- | Request vote responses may be handled by any server type
 mkRequestVoteResponse :: Bool -> RM.RequestVoteRPC -> Server t a -> RM.RequestVoteResponseRPC
-mkRequestVoteResponse granted request (Follower _ state _) =
+mkRequestVoteResponse granted request (Fol _ state _) =
     RM.RequestVoteResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
         , voteGranted = granted
         , term = getField @"currentTerm" state
         }
-mkRequestVoteResponse granted request (Candidate _ state _) =
+mkRequestVoteResponse granted request (Cand _ state _) =
     RM.RequestVoteResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
         , voteGranted = granted
         , term = getField @"currentTerm" state
         }
-mkRequestVoteResponse granted request (Leader _ state _) =
+mkRequestVoteResponse granted request (Lead _ state _) =
     RM.RequestVoteResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
         , voteGranted = granted
