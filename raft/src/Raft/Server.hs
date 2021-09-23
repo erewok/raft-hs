@@ -3,8 +3,14 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# Language PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# Language StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Raft.Server where
@@ -18,12 +24,18 @@ import qualified Raft.Log as RL
 import qualified Raft.Message as RM
 import Raft.Shared (ServerId)
 
-
 -- | A raft server may only be one of three different types.
-data Server a =
-    Follower ServerId FollowerState (RL.Log a)
-    | Candidate ServerId CandidateState (RL.Log a)
-    | Leader ServerId LeaderState (RL.Log a)
+-- data Server a =
+--     Follower ServerId FollowerState (RL.Log a)
+--     | Candidate ServerId CandidateState (RL.Log a)
+--     | Leader ServerId LeaderState (RL.Log a)
+
+data ServerType = ServerFollower | ServerCandidate | ServerLeader
+data Server (s :: ServerType) a where
+    Follower :: ServerId -> FollowerState -> RL.Log a -> Server 'ServerFollower a
+    Candidate :: ServerId -> CandidateState -> RL.Log a -> Server 'ServerCandidate a
+    Leader :: ServerId -> LeaderState -> RL.Log a -> Server 'ServerLeader a
+
 
 -- | FollowerState is the state recorded for each follower
 data FollowerState = FollowerState
@@ -66,7 +78,7 @@ data LeaderState = LeaderState
   A Leader may become a Follower.
   First, we define the state transition *to* a candidate.
 -}
-convertToCandidate :: Server a -> Server a
+convertToCandidate :: Server t a -> Server 'ServerCandidate a
 convertToCandidate server@(Follower serverId followerState log') =
     let votesResponded' = HS.fromList [serverId]
         votesGranted' = HS.fromList [serverId]
@@ -90,12 +102,12 @@ convertToCandidate server@(Candidate serverId candidateState log') =
             , votesGranted = votesGranted'
             } :: CandidateState
      in Candidate serverId newState log'
-convertToCandidate server = server -- Leaders cannot be converted into candidates
+-- convertToCandidate server = server -- Leaders cannot be converted into candidates
 
 {- |  Here, we convert a server to a leader.
  Only a Candidate may be converted
 -}
-convertToLeader :: Server a -> Server a
+convertToLeader :: Server 'ServerCandidate a -> Server 'ServerLeader a
 convertToLeader (Candidate serverId candidateState log') =
     let serverIds = getField @"allServerIds" candidateState
         serverIdList = HS.toList serverIds
@@ -109,14 +121,14 @@ convertToLeader (Candidate serverId candidateState log') =
                 , matchIndex = HM.fromList $ map (\s -> (s, RL.startLogIndex)) serverIdList
                 }
      in Leader serverId newState log'
-convertToLeader server = server
+-- convertToLeader server = server
 
 {- | After a RequestVoteResponse has been returned, we need to evaluate whether
  the Candidate has won, lost, or needs to keep waiting.
  If the election timeout happens again, the Candidate may
  call another election and convert itself to a *new* Candidate.
 -}
-maybePromoteCandidate :: Server a -> Server a
+maybePromoteCandidate :: Server 'ServerCandidate a -> Server t a
 maybePromoteCandidate server@(Candidate _ candidateState _)
     | hasQuorum respondedVotes && hasQuorum grantedVotes = convertToLeader server
     | hasQuorum respondedVotes && (not . hasQuorum $ grantedVotes) = convertToFollower server
@@ -126,7 +138,7 @@ maybePromoteCandidate server@(Candidate _ candidateState _)
     hasQuorum n = n >= quorum
     respondedVotes = HS.size (votesResponded candidateState)
     grantedVotes = HS.size (votesGranted candidateState)
-maybePromoteCandidate server = server
+-- maybePromoteCandidate server = server
 
 {- | Quorum is an important attribute for a Raft cluster.
  It is a simple majority of servers.
@@ -139,7 +151,7 @@ calcQuorum serverIds = div (HS.size serverIds) 2 + 1
   Only a Candidate or a Leader may be converted.
   A Follower is returned unchanged.
 -}
-convertToFollower :: Server a -> Server a
+convertToFollower :: Server t a -> Server 'ServerFollower a
 convertToFollower (Candidate serverId candidateState log') =
     let newState =
             FollowerState
@@ -169,7 +181,7 @@ convertToFollower follower@Follower {} = follower
  to all other servers.
  Note: only a Follower will update its log in response to the AppendEntriesRPC.
 -}
-handleAppendEntries :: RM.AppendEntriesRPC a -> Server a -> (Maybe RM.AppendEntriesResponseRPC, Server a)
+handleAppendEntries :: RM.AppendEntriesRPC a -> Server t a -> (Maybe RM.AppendEntriesResponseRPC, Server u a)
 handleAppendEntries msg (Follower serverId state serverLog) =
     let msgTerm = getField @"term" msg
         msgTermValid = msgTerm >= getStateTerm state
@@ -213,15 +225,15 @@ appendReqCheckLogOk req log'
     prevIndex = RM.prevLogIndex req
 
 -- | A Leader upon receiving an RM.AppendEntriesResponseRPC must update its state
-handleAppendEntriesResponse :: RM.AppendEntriesResponseRPC -> Server a -> Server a
+handleAppendEntriesResponse :: RM.AppendEntriesResponseRPC -> Server t a -> Server t a
 handleAppendEntriesResponse response server@(Leader serverId state serverLog) = undefined
 handleAppendEntriesResponse _ server = server
 
 -- | Leaders generate AppendEntriesRPCs.
-generateAppendEntriesRPC :: ServerId -> Server a -> Maybe (RM.AppendEntriesRPC a)
+generateAppendEntriesRPC :: ServerId -> Server t a -> Maybe (RM.AppendEntriesRPC a)
 generateAppendEntriesRPC recvr server = Nothing
 
-generateAppendEntriesRPCList :: Server a -> [RM.AppendEntriesRPC a]
+generateAppendEntriesRPCList :: Server t a -> [RM.AppendEntriesRPC a]
 generateAppendEntriesRPCList server@(Leader serverId state log') = undefined -- don't send to self!
 generateAppendEntriesRPCList server = []
 
@@ -229,7 +241,7 @@ generateAppendEntriesRPCList server = []
  If a Candidate finds out that it's behind, it may convert to a follower and then vote.
  The same may happen if it's a Leader.
 -}
-handleRequestVote :: RM.RequestVoteRPC -> Server a -> (Maybe RM.RequestVoteResponseRPC, Server a)
+handleRequestVote :: RM.RequestVoteRPC -> Server t a -> (Maybe RM.RequestVoteResponseRPC, Server u a)
 handleRequestVote request (Follower serverId state serverLog) =
     let msgTerm = RM.getTerm request
         msgTermValid = msgTerm >= getStateTerm state
@@ -259,7 +271,7 @@ voteForServer request state
 {- | A Candidate upon receiving a RM.RequestVoteResponseRPC must update its state
  If it wins an election, it should be converted to a leader.
 -}
-handleRequestVoteResponse :: RM.RequestVoteResponseRPC -> Server a -> Server a
+handleRequestVoteResponse :: RM.RequestVoteResponseRPC -> Server 'ServerCandidate a -> Server t a
 handleRequestVoteResponse response (Candidate serverId state serverLog) =
     -- Q: Should the Candidate *check* that this respondent is a *member* of this cluster?
     let respondent = RM.getSource response
@@ -272,7 +284,7 @@ handleRequestVoteResponse response (Candidate serverId state serverLog) =
 handleRequestVoteResponse _ server = server
 
 -- | Candidates generate RequestVoteRPCs for each server and send them in parallel.
-generateRequestVoteRPC :: Server a -> ServerId -> Maybe RM.RequestVoteRPC
+generateRequestVoteRPC :: Server 'ServerCandidate a -> ServerId -> Maybe RM.RequestVoteRPC
 generateRequestVoteRPC (Candidate serverId state serverLog) recvr =
     Just $
         RM.RequestVoteRPC
@@ -284,7 +296,7 @@ generateRequestVoteRPC (Candidate serverId state serverLog) recvr =
 generateRequestVoteRPC _ _ = Nothing
 
 -- | We can generate all RequestVoteRPCs by mapping over the list of Server IDs (not including this one)
-generateRequestVoteRPCList :: Server a -> [RM.RequestVoteRPC]
+generateRequestVoteRPCList :: Server 'ServerCandidate a -> [RM.RequestVoteRPC]
 generateRequestVoteRPCList server@(Candidate serverId state _) =
     mapMaybe (generateRequestVoteRPC server) . HS.toList $
         HS.difference (getField @"allServerIds" state) (HS.fromList [serverId])
@@ -294,7 +306,7 @@ generateRequestVoteRPCList _ = []
  means this server must *immediately* update its term to the latest.
  This comes from Raft paper §5.1.
 -}
-updateServerTerm :: RL.LogTerm -> Server a -> Server a
+updateServerTerm :: RL.LogTerm -> Server t a -> Server t a
 updateServerTerm t (Follower serverId serverState log') = Follower serverId state' log'
   where
     state' =
@@ -315,7 +327,7 @@ updateServerTerm t (Leader serverId serverState log') = Leader serverId state' l
             else serverState
 
 -- | Candidates or Followers will need to *increment* their term when an election begins
-incrementServerLogTerm :: Server a -> RL.LogTerm
+incrementServerLogTerm :: Server t a -> RL.LogTerm
 incrementServerLogTerm (Follower _ state _) = RL.incrementLogTerm . getStateTerm $ state
 incrementServerLogTerm (Candidate _ state _) = RL.incrementLogTerm . getStateTerm $ state
 -- Leader's log term must not be incremented: they do not start elections.
@@ -328,7 +340,7 @@ getStateTerm = getField @"currentTerm"
 {- | Here servers will translate a request into a response
  | Only a follower should reply to an AppendEntriesRPC
 -}
-mkAppendEntriesResponse :: Bool -> RM.AppendEntriesRPC a -> Server a -> RM.AppendEntriesResponseRPC
+mkAppendEntriesResponse :: Bool -> RM.AppendEntriesRPC a -> Server t a -> RM.AppendEntriesResponseRPC
 mkAppendEntriesResponse successful request (Follower _ state serverLog) =
     RM.AppendEntriesResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
@@ -352,7 +364,7 @@ mkAppendEntriesResponse _ request (Leader _ state serverLog) =
         }
 
 -- | Request vote responses may be handled by any server type
-mkRequestVoteResponse :: Bool -> RM.RequestVoteRPC -> Server a -> RM.RequestVoteResponseRPC
+mkRequestVoteResponse :: Bool -> RM.RequestVoteRPC -> Server t a -> RM.RequestVoteResponseRPC
 mkRequestVoteResponse granted request (Follower _ state _) =
     RM.RequestVoteResponseRPC
         { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
