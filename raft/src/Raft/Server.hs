@@ -3,11 +3,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Raft.Server where
@@ -22,18 +19,11 @@ import qualified Raft.Message as RM
 import Raft.Shared (ServerId)
 
 
--- data StateType = FState | CState | LState
-
 -- | A raft server may only be one of three different types.
--- data Server (a :: StateType) b where
---     Follower :: ServerId -> FollowerState -> RL.Log a -> Server 'FState a
---     Candidate :: ServerId -> CandidateState -> RL.Log a -> Server 'CState a
---     Leader :: ServerId -> LeaderState -> RL.Log a -> Server 'LState a
 data Server a =
     Follower ServerId FollowerState (RL.Log a)
     | Candidate ServerId CandidateState (RL.Log a)
     | Leader ServerId LeaderState (RL.Log a)
-
 
 -- | FollowerState is the state recorded for each follower
 data FollowerState = FollowerState

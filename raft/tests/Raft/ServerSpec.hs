@@ -13,6 +13,7 @@ import SpecFixtures
 import qualified Raft.Log as RL
 import qualified Raft.Message as RM
 import Raft.Server
+import Raft.Shared ( ServerId(ServerId) )
 
 
 checkCandidate :: Spec
@@ -20,16 +21,17 @@ checkCandidate = do
     describe "converToCandidate variations" $ do
         it "Can convert Follower with incremented term, responded, and granted" $ do
             let (Candidate serverId newState newLog) = convertToCandidate fig7ServerFollowerA
-                newIndex = getField @"currentTerm" newState
+                newTerm = getField @"currentTerm" newState
                 incrementedTerm = incrementServerLogTerm fig7ServerFollowerA
-            newIndex `shouldBe` incrementedTerm
+            newTerm `shouldBe` incrementedTerm
             votesResponded newState `shouldBe` HS.fromList [serverId]
             votesGranted newState `shouldBe` HS.fromList [serverId]
         it "Can convert Candidate with incremented term, responded, and granted" $ do
-            let (Candidate serverId newState newLog) = convertToCandidate . convertToCandidate $ fig7ServerFollowerA
-                newIndex = getField @"currentTerm" newState
+            let newCandidate = convertToCandidate fig7ServerFollowerA
+                (Candidate serverId newState newLog) = convertToCandidate newCandidate
+                newTerm = getField @"currentTerm" newState
                 incrementedTerm = RL.incrementLogTerm . incrementServerLogTerm $ fig7ServerFollowerA
-            newIndex `shouldBe` incrementedTerm
+            newTerm `shouldBe` incrementedTerm
             votesResponded newState `shouldBe` HS.fromList [serverId]
             votesGranted newState `shouldBe` HS.fromList [serverId]
         it "Cannot convert a leader" $ do
@@ -39,10 +41,13 @@ checkCandidate = do
 
     describe "generateRequestVoteRPC" $ do
         it "Candidate can generate a list of RequestVoteRPC" $ do
-            let newCand@(Candidate serverId state log') = convertToCandidate fig7ServerFollowerA
+            let newCand@(Candidate serverId' state' log'') = convertToCandidate fig7ServerFollowerA
+                voteResp = RM.RequestVoteResponseRPC (RM.SourceDest {RM.dest = ServerId 2, RM.source = ServerId 3} ) True (getStateTerm state)
+                newCandWithVote@(Candidate serverId state log') = handleRequestVoteResponse voteResp newCand
                 requestVotes = generateRequestVoteRPCList newCand
                 expectedLen = HS.size allServers - 1
             length requestVotes `shouldBe` expectedLen
+            -- Even though a vote had been received, we should see a reset here
             HS.fromList (map RM.getSource requestVotes) `shouldBe` HS.fromList [serverId]
             HS.fromList (map RM.getDest requestVotes) `shouldBe` HS.difference allServers (HS.fromList [serverId])
             map RM.lastLogTerm requestVotes `shouldBe` replicate expectedLen (RL.logLastTerm log')
