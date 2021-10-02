@@ -218,11 +218,35 @@ handleAppendEntriesResponse response server@(Leader serverId state serverLog) = 
 handleAppendEntriesResponse _ server = server
 
 -- | Leaders generate AppendEntriesRPCs.
-generateAppendEntriesRPC :: ServerId -> Server a -> Maybe (RM.AppendEntriesRPC a)
-generateAppendEntriesRPC recvr server = Nothing
+generateAppendEntriesRPC :: Server a -> ServerId -> Maybe (RM.AppendEntriesRPC a)
+generateAppendEntriesRPC server@(Leader serverId state log') recvr = do
+    (entries, prevIdx, prevTerm) <- getLogEntriesForRecvr server recvr
+    Just $
+        RM.AppendEntriesRPC
+            { RM.sourceAndDest = RM.SourceDest{RM.source = serverId, RM.dest = recvr}
+            , RM.prevLogIndex = prevIdx
+            , RM.prevLogTerm = prevTerm
+            , RM.logEntries = entries
+            , RM.commitIndex = getField @"commitIndex" state
+            , RM.term = getStateTerm state
+            }
+generateAppendEntriesRPC _ _ = Nothing
+
+getLogEntriesForRecvr :: Server a -> ServerId -> Maybe (RL.LogEntries a, RL.LogIndex, RL.LogTerm)
+getLogEntriesForRecvr server@(Leader serverId state log') recvr =
+    let
+        expectedIdx = HM.findWithDefault RL.startLogIndex recvr (nextIndex state)
+        prevIdx = expectedIdx - 1
+        prevTerm = RL.logTermAtIndex prevIdx log'
+        entries = RL.slice expectedIdx (RL.logLastIndex log' - expectedIdx) log'
+    in Just (entries, prevIdx, prevTerm)
+getLogEntriesForRecvr _ _ = Nothing
+
 
 generateAppendEntriesRPCList :: Server a -> [RM.AppendEntriesRPC a]
-generateAppendEntriesRPCList server@(Leader serverId state log') = undefined -- don't send to self!
+generateAppendEntriesRPCList server@(Leader serverId state log') =
+    mapMaybe (generateAppendEntriesRPC server) . HS.toList $
+        HS.difference (getField @"allServerIds" state) (HS.fromList [serverId])
 generateAppendEntriesRPCList server = []
 
 {- | This function handles the request vote RPC. Followers can vote.

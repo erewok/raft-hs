@@ -9,13 +9,6 @@ synopsis:           A raft implementation in Haskell2010
 
 extra-source-files: CHANGELOG.md
 
-executable raft
-    main-is:          Main.hs
-    build-depends:    base, raft
-    hs-source-dirs:   app
-    GHC-Options:      -Wall -rtsopts -with-rtsopts=-N
-    Default-Language: Haskell2010
-
 Library
     hs-source-dirs:   src
     GHC-Options:      -Wall

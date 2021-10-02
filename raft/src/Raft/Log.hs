@@ -27,6 +27,7 @@ module Raft.Log (
     mkLogIndex,
     mkLogTerm,
     nextLogIndex,
+    slice,
     startLogIndex,
     startLogTerm,
 ) where
@@ -142,6 +143,14 @@ takeTo entryIndex log' =
     takeLen = logIndexToVectorIndex $ entryIndex - offset log'
     truncatedVec = V.take takeLen (entries log')
 
+slice :: LogIndex -> LogIndex -> Log a -> LogEntries a
+slice start len log'
+    | V.null $ entries log' = V.empty
+    | start > logLastIndex log' = V.empty
+    | len <= 0 = V.empty
+    | len > currentEntryCount log' = V.empty
+    | otherwise = V.slice (logIndexToVectorIndex (start - (offset log'))) (logIndexToInt len) (entries log')
+
 -- | Validate that the index specified for `takeTo` is valid.
 checkTakeBounds :: LogIndex -> Log a -> Either Text ()
 checkTakeBounds entryIndex log'
@@ -170,7 +179,10 @@ logTermAtIndex idx log' =
 
 -- | Get the length of a log using the offset
 logLastIndex :: Log a -> LogIndex
-logLastIndex log' = (+) (offset log') (LIndex . V.length . entries $ log')
+logLastIndex log' = (+) (offset log') (currentEntryCount log')
+
+currentEntryCount :: Log a -> LogIndex
+currentEntryCount log' = LIndex . V.length . entries $ log'
 
 {- | Given a Term and an Index, check if Log is more up-to-date than these.
  If the logs end with different terms, then the log ending on the
