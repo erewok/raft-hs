@@ -15,6 +15,7 @@ module Raft.Log (
     appendEntries,
     checkAppendEntries,
     clearStaleEntriesAndAppend,
+    decrementLogIndex,
     getLogEntry,
     incrementLogIndex,
     incrementLogTerm,
@@ -207,6 +208,11 @@ incrementLogTerm (LTerm n) = LTerm (n + 1)
 -- | Adding one to the LogIndex
 incrementLogIndex :: LogIndex -> LogIndex
 incrementLogIndex (LIndex n) = LIndex (n + 1)
+
+decrementLogIndex :: LogIndex -> LogIndex
+decrementLogIndex (LIndex 0) = LIndex 0
+decrementLogIndex (LIndex n) = LIndex (n - 1)
+
 
 {- | Locating an entry in a log involves matching on the index
  There's a further complication we have added here where a LogEntry

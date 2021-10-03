@@ -11,6 +11,7 @@ module Raft.Server where
 
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as HS
+import Data.List (sort)
 import Data.Maybe (isNothing, mapMaybe)
 import GHC.Records (HasField (..))
 
@@ -214,8 +215,36 @@ appendReqCheckLogOk req log'
 
 -- | A Leader upon receiving an RM.AppendEntriesResponseRPC must update its state
 handleAppendEntriesResponse :: RM.AppendEntriesResponseRPC -> Server a -> Server a
-handleAppendEntriesResponse response server@(Leader serverId state serverLog) = undefined
+handleAppendEntriesResponse response server@(Leader serverId state serverLog)
+    | RM.success response =
+        let
+            msgSrc = RM.getSource response
+            msgMatchIdx = RM.matchIndex response
+            udpatedMatchIdx = HM.adjust (max msgMatchIdx) msgSrc (matchIndex state)
+            updatedNextIdx = HM.insert msgSrc (RL.incrementLogIndex msgMatchIdx) (nextIndex state)
+            state' = state {nextIndex=updatedNextIdx, matchIndex=udpatedMatchIdx}
+        in
+            checkLeaderAppliedCommitted (Leader serverId state' serverLog)
+    | otherwise =
+        let
+            updatedNextIdx = HM.adjust RL.decrementLogIndex (RM.getSource response) (nextIndex state)
+            state' = state {nextIndex=updatedNextIdx}
+        in
+            Leader serverId state' serverLog
 handleAppendEntriesResponse _ server = server
+
+checkLeaderAppliedCommitted :: Server a -> Server a
+checkLeaderAppliedCommitted server@(Leader serverId state serverLog) =
+    let
+        allMatches = sort . HM.elems . matchIndex $ state
+        matchMedian = div (length allMatches) 2
+        numCommitted = if matchMedian >= 0 then allMatches !! matchMedian else RL.startLogIndex
+        commitIdx = max numCommitted (getField @"commitIndex" state)
+        -- TODO: Figure out what to do about lastApplied and "apply" entries
+        state' = state{commitIndex=commitIdx, lastApplied=commitIdx} :: LeaderState
+    in
+        Leader serverId state' serverLog
+checkLeaderAppliedCommitted server = server
 
 -- | Leaders generate AppendEntriesRPCs.
 generateAppendEntriesRPC :: Server a -> ServerId -> Maybe (RM.AppendEntriesRPC a)
