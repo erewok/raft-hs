@@ -42,7 +42,7 @@ checkCandidate = do
     describe "generateRequestVoteRPC" $ do
         it "Candidate can generate a list of RequestVoteRPC" $ do
             let newCand@(Candidate serverId' state' log'') = convertToCandidate fig7ServerFollowerA
-                voteResp = RM.RequestVoteResponseRPC (RM.SourceDest {RM.dest = ServerId 2, RM.source = ServerId 3} ) True (getStateTerm state)
+                voteResp = RM.RequestVoteResponseRPC (RM.SourceDest {RM.dest = ServerId 2, RM.source = ServerId 3} ) True (getCurrentTerm state)
                 newCandWithVote@(Candidate serverId state log') = handleRequestVoteResponse voteResp newCand
                 requestVotes = generateRequestVoteRPCList newCand
                 expectedLen = HS.size allServers - 1
@@ -52,7 +52,7 @@ checkCandidate = do
             HS.fromList (map RM.getDest requestVotes) `shouldBe` HS.difference allServers (HS.fromList [serverId])
             map RM.lastLogTerm requestVotes `shouldBe` replicate expectedLen (RL.logLastTerm log')
             map RM.lastLogIndex requestVotes `shouldBe` replicate expectedLen (RL.logLastIndex log')
-            map (getField @"term") requestVotes `shouldBe` replicate expectedLen (getStateTerm state)
+            map (getField @"term") requestVotes `shouldBe` replicate expectedLen (getCurrentTerm state)
         it "A Leader will not generate RequestVoteRPC" $ do
             generateRequestVoteRPCList fig7ServerLeader `shouldBe` []
         it "A Follower will not generate RequestVoteRPC" $ do
@@ -75,7 +75,26 @@ checkCandidate = do
 --         it "Generate append entries for followers missing" $ do
 --             undefined
 
+checkFollower :: Spec
+checkFollower = do
+    describe "convertToFollower variations" $ do
+        it "Can convert to Follower from Candidate" $ do
+            let candidate@(Candidate _ cstate _) = convertToCandidate fig7ServerFollowerA
+                follower@(Follower _ fstate _ ) = convertToFollower candidate
+            getCurrentTerm fstate `shouldBe` getCurrentTerm cstate
+            votedFor fstate `shouldBe` Nothing
+            currentLeader fstate `shouldBe` Nothing
+        it "Can convert to Follower from Leader" $ do
+            let follower@(Follower _ fstate _ ) = convertToFollower fig7ServerLeader
+                (Leader _ lstate _ ) = fig7ServerLeader
+            getCurrentTerm fstate `shouldBe` getCurrentTerm lstate
+            votedFor fstate `shouldBe` Nothing
+            currentLeader fstate `shouldBe` Nothing
+        it "A Follower should remain Follower" $ do
+            convertToFollower fig7ServerFollowerA `shouldBe` fig7ServerFollowerA
+
 
 serverSpec :: Spec
 serverSpec = do
     checkCandidate
+    checkFollower

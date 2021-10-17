@@ -85,3 +85,6 @@ getSource = source . getSourceAndDest
 
 getDest :: HasField "sourceAndDest" r SourceDest => r -> ServerId
 getDest = dest . getSourceAndDest
+
+staleTerm :: HasField "term" r LogTerm => r -> LogTerm -> Bool
+staleTerm r cmpTerm = getField @"term" r < cmpTerm
