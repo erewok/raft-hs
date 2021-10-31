@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Raft.Server where
@@ -75,9 +76,9 @@ convertToCandidate server@(Follower serverId followerState log') =
         newState =
             CandidateState
                 { currentTerm = incrementServerLogTerm server
-                , commitIndex = getField @"commitIndex" followerState
-                , lastApplied = getField @"lastApplied" followerState
-                , allServerIds = getField @"allServerIds" followerState
+                , commitIndex = followerState.commitIndex
+                , lastApplied = followerState.lastApplied
+                , allServerIds = followerState.allServerIds
                 , votesResponded = votesResponded'
                 , votesGranted = votesGranted'
                 }
@@ -99,14 +100,14 @@ convertToCandidate server = server -- Leaders cannot be converted into candidate
 -}
 convertToLeader :: Server a -> Server a
 convertToLeader (Candidate serverId candidateState log') =
-    let serverIds = getField @"allServerIds" candidateState
+    let serverIds = candidateState.allServerIds
         serverIdList = HS.toList serverIds
         newState =
             LeaderState
                 { currentTerm = getCurrentTerm candidateState
-                , commitIndex = getField @"commitIndex" candidateState
-                , lastApplied = getField @"lastApplied" candidateState
-                , allServerIds = serverIds
+                , commitIndex = candidateState.commitIndex
+                , lastApplied = candidateState.lastApplied
+                , allServerIds = candidateState.allServerIds
                 , nextIndex = HM.fromList $ map (\s -> (s, RL.nextLogIndex log')) serverIdList
                 , matchIndex = HM.fromList $ map (\s -> (s, RL.startLogIndex)) serverIdList
                 }
@@ -124,7 +125,7 @@ maybePromoteCandidate server@(Candidate _ candidateState _)
     | hasQuorum respondedVotes && (not . hasQuorum $ grantedVotes) = convertToFollower server
     | otherwise = server
   where
-    quorum = calcQuorum (getField @"allServerIds" candidateState)
+    quorum = calcQuorum (candidateState.allServerIds)
     hasQuorum n = n >= quorum
     respondedVotes = HS.size (votesResponded candidateState)
     grantedVotes = HS.size (votesGranted candidateState)
@@ -146,9 +147,9 @@ convertToFollower (Candidate serverId candidateState log') =
     let newState =
             FollowerState
                 { currentTerm = getCurrentTerm candidateState
-                , commitIndex = getField @"commitIndex" candidateState
-                , lastApplied = getField @"lastApplied" candidateState
-                , allServerIds = getField @"allServerIds" candidateState
+                , commitIndex = candidateState.commitIndex
+                , lastApplied = candidateState.lastApplied
+                , allServerIds = candidateState.allServerIds
                 , votedFor = Nothing
                 , currentLeader = Nothing
                 }
@@ -157,9 +158,9 @@ convertToFollower (Leader serverId leaderState log') =
     let newState =
             FollowerState
                 { currentTerm = getCurrentTerm leaderState
-                , commitIndex = getField @"commitIndex" leaderState
-                , lastApplied = getField @"lastApplied" leaderState
-                , allServerIds = getField @"allServerIds" leaderState
+                , commitIndex = leaderState.commitIndex
+                , lastApplied = leaderState.lastApplied
+                , allServerIds = leaderState.allServerIds
                 , votedFor = Nothing
                 , currentLeader = Nothing
                 }
@@ -197,8 +198,8 @@ appendEntriesUpdateState msg success' latestIndex state =
     state{votedFor = Nothing, currentLeader = leaderUpdate, commitIndex = latestCommitted}
   where
     leaderUpdate = if success' then Just $ RM.getSource msg else Nothing
-    msgCommitIndex = getField @"commitIndex" msg
-    currentCommitIndex = getField @"commitIndex" state
+    msgCommitIndex = msg.commitIndex
+    currentCommitIndex = state.commitIndex
     latestCommitted = if success' && msgCommitIndex > currentCommitIndex then min msgCommitIndex latestIndex else currentCommitIndex
 
 -- | Check append entries request has expected log.
@@ -236,12 +237,12 @@ handleAppendEntriesResponse response server@(Leader serverId state serverLog)
 handleAppendEntriesResponse _ server = server
 
 checkLeaderAppliedCommitted :: Server a -> Server a
-checkLeaderAppliedCommitted server@(Leader serverId state serverLog) =
+checkLeaderAppliedCommitted (Leader serverId state serverLog) =
     let
         allMatches = sort . HM.elems . matchIndex $ state
         matchMedian = div (length allMatches) 2
         numCommitted = if matchMedian >= 0 then allMatches !! matchMedian else RL.startLogIndex
-        commitIdx = max numCommitted (getField @"commitIndex" state)
+        commitIdx = max numCommitted (state.commitIndex)
         -- TODO: Figure out what to do about lastApplied and "apply" entries
         state' = state{commitIndex=commitIdx, lastApplied=commitIdx} :: LeaderState
     in
@@ -250,7 +251,7 @@ checkLeaderAppliedCommitted server = server
 
 -- | Leaders generate AppendEntriesRPCs.
 generateAppendEntriesRPC :: Server a -> ServerId -> Maybe (RM.AppendEntriesRPC a)
-generateAppendEntriesRPC server@(Leader serverId state log') recvr = do
+generateAppendEntriesRPC server@(Leader serverId state _) recvr = do
     (entries, prevIdx, prevTerm) <- getLogEntriesForRecvr server recvr
     Just $
         RM.AppendEntriesRPC
@@ -258,13 +259,13 @@ generateAppendEntriesRPC server@(Leader serverId state log') recvr = do
             , RM.prevLogIndex = prevIdx
             , RM.prevLogTerm = prevTerm
             , RM.logEntries = entries
-            , RM.commitIndex = getField @"commitIndex" state
+            , RM.commitIndex = state.commitIndex
             , RM.term = getCurrentTerm state
             }
 generateAppendEntriesRPC _ _ = Nothing
 
 getLogEntriesForRecvr :: Server a -> ServerId -> Maybe (RL.LogEntries a, RL.LogIndex, RL.LogTerm)
-getLogEntriesForRecvr server@(Leader serverId state log') recvr =
+getLogEntriesForRecvr server@(Leader _ state log') recvr =
     let
         expectedIdx = HM.findWithDefault RL.startLogIndex recvr (nextIndex state)
         prevIdx = expectedIdx - 1
@@ -275,10 +276,10 @@ getLogEntriesForRecvr _ _ = Nothing
 
 
 generateAppendEntriesRPCList :: Server a -> [RM.AppendEntriesRPC a]
-generateAppendEntriesRPCList server@(Leader serverId state log') =
+generateAppendEntriesRPCList server@(Leader serverId state _) =
     mapMaybe (generateAppendEntriesRPC server) . HS.toList $
-        HS.difference (getField @"allServerIds" state) (HS.fromList [serverId])
-generateAppendEntriesRPCList server = []
+        HS.difference (state.allServerIds) (HS.fromList [serverId])
+generateAppendEntriesRPCList _ = []
 
 {- | This function handles the request vote RPC. Followers can vote.
  If a Candidate finds out that it's behind, it may convert to a follower and then vote.
@@ -288,7 +289,7 @@ handleRequestVote :: RM.RequestVoteRPC -> Server a -> (Maybe RM.RequestVoteRespo
 handleRequestVote request (Follower serverId state serverLog) =
     let msgTerm = RM.getTerm request
         msgTermValid = msgTerm >= getCurrentTerm state
-        candidateIsUpToDate = msgTermValid && RL.logIsBehindOrEqual (getField @"lastLogTerm" request) (getField @"lastLogIndex" request) serverLog
+        candidateIsUpToDate = msgTermValid && RL.logIsBehindOrEqual (request.lastLogTerm) (request.lastLogIndex) serverLog
         (voted, state') = if candidateIsUpToDate then voteForServer request state else (False, state)
         server' = updateServerTerm msgTerm (Follower serverId state' serverLog)
         response = mkRequestVoteResponse voted request server'
@@ -344,7 +345,7 @@ generateRequestVoteRPC _ _ = Nothing
 generateRequestVoteRPCList :: Server a -> [RM.RequestVoteRPC]
 generateRequestVoteRPCList server@(Candidate serverId state _) =
     mapMaybe (generateRequestVoteRPC server) . HS.toList $
-        HS.difference (getField @"allServerIds" state) (HS.fromList [serverId])
+        HS.difference (state.allServerIds) (HS.fromList [serverId])
 generateRequestVoteRPCList _ = []
 
 {- | Any message received from a server with a term greater than this server's
@@ -388,21 +389,21 @@ getCurrentTerm = getField @"currentTerm"
 mkAppendEntriesResponse :: Bool -> RM.AppendEntriesRPC a -> Server a -> RM.AppendEntriesResponseRPC
 mkAppendEntriesResponse successful request (Follower _ state serverLog) =
     RM.AppendEntriesResponseRPC
-        { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
+        { sourceAndDest = RM.swapSourceAndDest (request.sourceAndDest)
         , matchIndex = RL.logLastIndex serverLog
         , success = successful
         , term = getCurrentTerm state
         }
 mkAppendEntriesResponse _ request (Candidate _ state serverLog) =
     RM.AppendEntriesResponseRPC
-        { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
+        { sourceAndDest = RM.swapSourceAndDest (request.sourceAndDest)
         , matchIndex = RL.logLastIndex serverLog
         , success = False
         , term = getCurrentTerm state
         }
 mkAppendEntriesResponse _ request (Leader _ state serverLog) =
     RM.AppendEntriesResponseRPC
-        { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
+        { sourceAndDest = RM.swapSourceAndDest (request.sourceAndDest)
         , matchIndex = RL.logLastIndex serverLog
         , success = False
         , term = getCurrentTerm state
@@ -412,19 +413,19 @@ mkAppendEntriesResponse _ request (Leader _ state serverLog) =
 mkRequestVoteResponse :: Bool -> RM.RequestVoteRPC -> Server a -> RM.RequestVoteResponseRPC
 mkRequestVoteResponse granted request (Follower _ state _) =
     RM.RequestVoteResponseRPC
-        { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
+        { sourceAndDest = RM.swapSourceAndDest (request.sourceAndDest)
         , voteGranted = granted
-        , term = getField @"currentTerm" state
+        , term = state.currentTerm
         }
 mkRequestVoteResponse granted request (Candidate _ state _) =
     RM.RequestVoteResponseRPC
-        { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
+        { sourceAndDest = RM.swapSourceAndDest (request.sourceAndDest)
         , voteGranted = granted
-        , term = getField @"currentTerm" state
+        , term = state.currentTerm
         }
 mkRequestVoteResponse granted request (Leader _ state _) =
     RM.RequestVoteResponseRPC
-        { sourceAndDest = RM.swapSourceAndDest (getField @"sourceAndDest" request)
+        { sourceAndDest = RM.swapSourceAndDest (request.sourceAndDest)
         , voteGranted = granted
-        , term = getField @"currentTerm" state
+        , term = state.currentTerm
         }
